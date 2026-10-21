@@ -17,7 +17,7 @@
   <img src="https://img.shields.io/badge/Rust-1.80+-DEA584?logo=rust" alt="Rust" />
   <img src="https://img.shields.io/badge/Platform-Windows%2010%20%2F%2011-0078D4?logo=windows" alt="Platform" />
   <img src="https://img.shields.io/badge/License-MIT-green.svg" alt="MIT License" />
-  <img src="https://img.shields.io/badge/Version-v0.1.0--alpha-blue" alt="Version v0.1.0-alpha" />
+  <a href="https://github.com/fobakic/OpenAnima/releases"><img src="https://img.shields.io/github/v/release/fobakic/OpenAnima?color=blue" alt="GitHub Release" /></a>
 </p>
 
 ---
@@ -127,14 +127,13 @@ OpenAnima.Core (Rust Microcore ~1.0 MB)
 
 ## Форматы сборки и релизы
 
-В проекте настроена автоматическая сборка через скрипты `build.ps1` и `build.bat`:
+Готовые сборки опубликованы в [**разделе Releases**](https://github.com/fobakic/OpenAnima/releases/tag/v0.1.0-alpha) или собираются локально через `build.ps1` в папку `releases/`:
 
-| Файл | Размер | Описание |
-| :--- | :--- | :--- |
-| **`OpenAnima-v0.1.0-alpha-standalone.exe`** | **8.9 МБ** | **Рекомендуется.** Единый исполняемый файл. Микроядро Rust встроено внутрь как ресурс и распаковывается автоматически при первом запуске. |
-| **`OpenAnima-v0.1.0-alpha-portable.zip`** | **3.9 МБ** | Портативный архив со всеми бинарными файлами и документацией. Распакуйте в любую папку и запустите `OpenAnima.exe`. |
-| **`OpenAnima-v0.1.0-alpha-selfcontained.exe`** | **71.9 МБ** | Полностью автономный EXE (Zero Prerequisites). Содержит собственную копию .NET Runtime и запускается на чистой Windows. |
-| **`SHA256SUMS.txt`** | < 1 КБ | Контрольные суммы SHA-256 для проверки целостности сборок. |
+| Файл | Размер | Описание | Скачать |
+| :--- | :--- | :--- | :--- |
+| **Standalone Single-File EXE** | **8.9 МБ** | **Рекомендуется.** Единый исполняемый файл с упакованным ядром Rust. Распаковывается автоматически. | [⬇️ Скачать EXE](https://github.com/fobakic/OpenAnima/releases/download/v0.1.0-alpha/OpenAnima-v0.1.0-alpha-standalone.exe) |
+| **Портативный ZIP-архив** | **3.9 МБ** | Портативный архив со всеми бинарниками и документацией. Распакуйте в любую папку и запускайте. | [⬇️ Скачать ZIP](https://github.com/fobakic/OpenAnima/releases/download/v0.1.0-alpha/OpenAnima-v0.1.0-alpha-portable.zip) |
+| **Контрольные суммы SHA-256** | < 1 КБ | Криптографические хэши для проверки подлинности и целостности файлов. | [⬇️ Открыть суммы](https://github.com/fobakic/OpenAnima/releases/download/v0.1.0-alpha/SHA256SUMS.txt) |
 
 ### Автосборка из исходников
 

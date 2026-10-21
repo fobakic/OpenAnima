@@ -17,7 +17,7 @@
   <img src="https://img.shields.io/badge/Rust-1.80+-DEA584?logo=rust" alt="Rust" />
   <img src="https://img.shields.io/badge/Platform-Windows%2010%20%2F%2011-0078D4?logo=windows" alt="Platform" />
   <img src="https://img.shields.io/badge/License-MIT-green.svg" alt="MIT License" />
-  <img src="https://img.shields.io/badge/Version-v0.1.0--alpha-blue" alt="Version v0.1.0-alpha" />
+  <a href="https://github.com/fobakic/OpenAnima/releases"><img src="https://img.shields.io/github/v/release/fobakic/OpenAnima?color=blue" alt="GitHub Release" /></a>
 </p>
 
 ---
@@ -124,14 +124,13 @@ OpenAnima.Core (Rust Microcore ~1.0 MB)
 
 ## Download Releases & Automated Builds
 
-Pre-built releases are generated automatically via `build.ps1` into `releases/`:
+Pre-built releases are available in the [**Releases section**](https://github.com/fobakic/OpenAnima/releases/tag/v0.1.0-alpha) or generated automatically via `build.ps1` into `releases/`:
 
-| Package | Size | Description |
-| :--- | :--- | :--- |
-| **`OpenAnima-v0.1.0-alpha-standalone.exe`** | **8.9 MB** | **Recommended.** Single executable. Embedded native Rust microcore extracts automatically on first launch. |
-| **`OpenAnima-v0.1.0-alpha-portable.zip`** | **3.9 MB** | Portable zip archive with all binaries and documentation. Extract anywhere and launch `OpenAnima.exe`. |
-| **`OpenAnima-v0.1.0-alpha-selfcontained.exe`** | **71.9 MB** | Zero-prerequisites standalone package with bundled .NET 8 runtime. Runs on any clean Windows machine. |
-| **`SHA256SUMS.txt`** | < 1 KB | SHA-256 checksums to verify release integrity. |
+| Package | Size | Description | Download |
+| :--- | :--- | :--- | :--- |
+| **Standalone Single-File EXE** | **8.9 MB** | **Recommended.** Single executable with embedded Rust microcore. Auto-extracts on first run. | [⬇️ Download EXE](https://github.com/fobakic/OpenAnima/releases/download/v0.1.0-alpha/OpenAnima-v0.1.0-alpha-standalone.exe) |
+| **Portable ZIP Archive** | **3.9 MB** | Portable zip archive with all binaries and documentation. Extract and run anywhere. | [⬇️ Download ZIP](https://github.com/fobakic/OpenAnima/releases/download/v0.1.0-alpha/OpenAnima-v0.1.0-alpha-portable.zip) |
+| **SHA-256 Checksums** | < 1 KB | Cryptographic hashes to verify package authenticity and integrity. | [⬇️ View Checksums](https://github.com/fobakic/OpenAnima/releases/download/v0.1.0-alpha/SHA256SUMS.txt) |
 
 ### Build from Source
 
