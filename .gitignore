@@ -1,0 +1,29 @@
+# Legacy decompiles and proprietary game reference files
+_legacy_reference/
+
+# Visual Studio & JetBrains Rider
+.vs/
+*.user
+*.suo
+*.userosscache
+*.sln.docstates
+.idea/
+
+# .NET Build artifacts
+**/bin/
+**/obj/
+*.DotSettings.user
+
+# Rust Cargo build artifacts
+**/target/
+Cargo.lock.bak
+
+# Releases binaries (publish artifacts)
+releases/
+
+# OS generated files
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+$RECYCLE.BIN/
+.DS_Store

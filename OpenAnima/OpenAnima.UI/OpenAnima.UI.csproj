@@ -1,0 +1,37 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <UseWPF>true</UseWPF>
+    <ApplicationIcon>Assets\openanima.ico</ApplicationIcon>
+    <AssemblyName>OpenAnima</AssemblyName>
+    <AssemblyTitle>OpenAnima</AssemblyTitle>
+    <Product>OpenAnima</Product>
+    <Description>Open-source lightweight game overlay engine for Windows</Description>
+    <Version>0.1.0-alpha</Version>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Resource Include="Assets\openanima.ico" />
+    <Resource Include="Assets\openanima.png" />
+    <None Include="Assets\**">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="WPF-UI" Version="4.3.0" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <None Include="..\OpenAnima.Core\target\release\openanima-core.exe" Condition="Exists('..\OpenAnima.Core\target\release\openanima-core.exe')">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <Visible>false</Visible>
+    </None>
+    <EmbeddedResource Include="..\OpenAnima.Core\target\release\openanima-core.exe" Condition="Exists('..\OpenAnima.Core\target\release\openanima-core.exe')" LogicalName="openanima-core.exe" />
+  </ItemGroup>
+
+</Project>

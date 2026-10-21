@@ -1,0 +1,479 @@
+<Window x:Class="OpenAnima.UI.MainWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+        xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+        xmlns:ui="http://schemas.lepo.co/wpfui/2022/xaml"
+        xmlns:local="clr-namespace:OpenAnima.UI"
+        mc:Ignorable="d"
+        Title="{DynamicResource App_Title}" 
+        Icon="Assets/openanima.ico"
+        Height="720" Width="1080"
+        MinHeight="550" MinWidth="850"
+        WindowStartupLocation="CenterScreen"
+        AllowDrop="True" Drop="Window_Drop" DragOver="Window_DragOver"
+        Background="{DynamicResource ApplicationBackgroundBrush}">
+
+    <Window.ContextMenu>
+        <ContextMenu x:Name="TrayContextMenu">
+            <MenuItem x:Name="MenuOpen" Header="{DynamicResource Tray_Open}" FontWeight="Bold" Click="MenuOpen_Click" />
+            <MenuItem x:Name="MenuToggleOverlays" Header="{DynamicResource Tray_HideAll}" Click="MenuToggleOverlays_Click" />
+            <MenuItem x:Name="MenuStopAll" Header="{DynamicResource Tray_StopAll}" Click="BtnStopAll_Click" />
+            <Separator />
+            <MenuItem x:Name="MenuExit" Header="{DynamicResource Tray_Exit}" Click="MenuExit_Click" />
+        </ContextMenu>
+    </Window.ContextMenu>
+
+    <Window.Resources>
+        <BooleanToVisibilityConverter x:Key="BoolToVis" />
+    </Window.Resources>
+    
+    <Grid>
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="*" />
+            <RowDefinition Height="Auto" />
+        </Grid.RowDefinitions>
+
+        <!-- Top Header -->
+        <Border Grid.Row="0" Background="{DynamicResource CardBackgroundFillColorDefaultBrush}" Padding="20,12" BorderThickness="0,0,0,1" BorderBrush="{DynamicResource CardStrokeColorDefaultBrush}">
+            <Grid>
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="Auto" />
+                </Grid.ColumnDefinitions>
+                <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                    <Image Source="Assets/openanima.png" Width="26" Height="26" Margin="0,0,10,0" VerticalAlignment="Center" RenderOptions.BitmapScalingMode="HighQuality" />
+                    <ui:TextBlock Text="OpenAnima" FontSize="20" FontWeight="Bold" VerticalAlignment="Center" Margin="0,0,10,0" />
+                    <ui:Badge Content="v0.1-alpha" Appearance="Primary" VerticalAlignment="Center" />
+                    <ui:TextBlock Text="{DynamicResource Header_Tagline}" FontSize="13" Foreground="{DynamicResource TextFillColorSecondaryBrush}" VerticalAlignment="Center" Margin="10,0,0,0" />
+                </StackPanel>
+
+                <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center">
+                    <ui:Badge x:Name="BadgeActiveCount" Content="{DynamicResource Active_Count_Zero}" Appearance="Secondary" Margin="0,0,10,0" VerticalAlignment="Center" />
+                    <ui:Button x:Name="BtnToggleAllOverlays" Content="{DynamicResource Header_HideAll}" Icon="{ui:SymbolIcon EyeOff24}" Padding="10,6" Appearance="Transparent" Click="MenuToggleOverlays_Click" ToolTip="{DynamicResource Header_ToggleTooltip}" />
+                </StackPanel>
+            </Grid>
+        </Border>
+
+        <!-- Main Content Area with Navigation Tabs -->
+        <TabControl x:Name="MainTabControl" Grid.Row="1" Margin="16,8,16,8">
+            
+            <!-- Tab: Library -->
+            <TabItem x:Name="TabLibrary" Header="{DynamicResource Tab_Library}">
+                <Grid Margin="0,12,0,0">
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="*" />
+                    </Grid.RowDefinitions>
+
+                    <!-- Top Action Bar -->
+                    <Grid Grid.Row="0" Margin="0,0,0,16">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+
+                        <StackPanel Orientation="Horizontal" Grid.Column="0">
+                            <ui:Button x:Name="BtnAddAnimation" Content="{DynamicResource Btn_AddAnimation}" Icon="{ui:SymbolIcon ArrowUpload24}" 
+                                       Appearance="Primary" Margin="0,0,10,0" Click="BtnAddAnimation_Click" />
+                            <ui:Button x:Name="BtnStopAll" Content="{DynamicResource Btn_StopAll}" Icon="{ui:SymbolIcon Stop24}" 
+                                       Appearance="Secondary" Margin="0,0,10,0" Click="BtnStopAll_Click" />
+                            <ui:Button x:Name="BtnLoadSamples" Content="{DynamicResource Btn_Samples}" Icon="{ui:SymbolIcon Sparkle24}" 
+                                       Appearance="Transparent" Click="BtnLoadSamples_Click" />
+                        </StackPanel>
+
+                        <ui:TextBox x:Name="TxtSearch" Grid.Column="1" Width="260" PlaceholderText="{DynamicResource Search_Placeholder}"
+                                    Icon="{ui:SymbolIcon Search24}" TextChanged="TxtSearch_TextChanged" />
+                    </Grid>
+
+                    <!-- Animations Cards Grid -->
+                    <ScrollViewer x:Name="AnimationsScrollViewer" Grid.Row="1" VerticalScrollBarVisibility="Auto" SizeChanged="AnimationsScrollViewer_SizeChanged">
+                        <Grid>
+                            <!-- Empty State -->
+                            <Border x:Name="EmptyStateBorder" Visibility="Collapsed" Padding="40" HorizontalAlignment="Center" VerticalAlignment="Center" Margin="0,40,0,0">
+                                <StackPanel HorizontalAlignment="Center">
+                                    <ui:SymbolIcon Symbol="FolderAdd48" FontSize="48" Foreground="{DynamicResource TextFillColorSecondaryBrush}" HorizontalAlignment="Center" Margin="0,0,0,12" />
+                                    <ui:TextBlock Text="{DynamicResource Empty_Title}" FontSize="16" FontWeight="SemiBold" HorizontalAlignment="Center" Margin="0,0,0,6" />
+                                    <ui:TextBlock Text="{DynamicResource Empty_Desc}" 
+                                                  Foreground="{DynamicResource TextFillColorSecondaryBrush}" HorizontalAlignment="Center" Margin="0,0,0,16" />
+                                    <StackPanel Orientation="Horizontal" HorizontalAlignment="Center">
+                                        <ui:Button Content="{DynamicResource Empty_BtnAdd}" Icon="{ui:SymbolIcon ArrowUpload24}" Appearance="Primary" Click="BtnAddAnimation_Click" Margin="0,0,10,0" />
+                                        <ui:Button Content="{DynamicResource Empty_BtnSamples}" Icon="{ui:SymbolIcon Sparkle24}" Appearance="Secondary" Click="BtnLoadSamples_Click" />
+                                    </StackPanel>
+                                </StackPanel>
+                            </Border>
+
+                            <ItemsControl x:Name="AnimationsItemsControl">
+                                <ItemsControl.ItemsPanel>
+                                    <ItemsPanelTemplate>
+                                        <WrapPanel Orientation="Horizontal" />
+                                    </ItemsPanelTemplate>
+                                </ItemsControl.ItemsPanel>
+                                <ItemsControl.ItemTemplate>
+                                    <DataTemplate>
+                                        <ui:Card Width="{Binding CardWidth, RelativeSource={RelativeSource AncestorType=Window}}" MinHeight="360" Margin="0,0,14,14" Padding="14">
+                                            <Grid>
+                                                <Grid.RowDefinitions>
+                                                    <RowDefinition Height="Auto" />
+                                                    <RowDefinition Height="*" />
+                                                    <RowDefinition Height="Auto" />
+                                                </Grid.RowDefinitions>
+
+                                                <!-- Header: Thumbnail + Name + Status + Quick Actions -->
+                                                <Grid Grid.Row="0" Margin="0,0,0,12">
+                                                    <Grid.ColumnDefinitions>
+                                                        <ColumnDefinition Width="Auto" />
+                                                        <ColumnDefinition Width="*" />
+                                                        <ColumnDefinition Width="Auto" />
+                                                    </Grid.ColumnDefinitions>
+
+                                                    <!-- 46x46 Preview Thumbnail -->
+                                                    <Border Grid.Column="0" Width="46" Height="46" CornerRadius="8" 
+                                                            Background="{DynamicResource CardBackgroundFillColorSecondaryBrush}" 
+                                                            BorderBrush="{DynamicResource ControlStrokeColorDefaultBrush}" BorderThickness="1" 
+                                                            Margin="0,0,10,0" ClipToBounds="True">
+                                                        <Image Source="{Binding Preview}" Stretch="Uniform" RenderOptions.BitmapScalingMode="NearestNeighbor" />
+                                                    </Border>
+
+                                                    <!-- Name and Status -->
+                                                    <StackPanel Grid.Column="1" VerticalAlignment="Center" Margin="0,0,8,0">
+                                                        <ui:TextBlock Text="{Binding Name}" FontWeight="SemiBold" FontSize="14" 
+                                                                      TextTrimming="CharacterEllipsis" ToolTip="{Binding Name}" />
+                                                        <StackPanel Orientation="Horizontal" Margin="0,3,0,0">
+                                                            <Ellipse Width="7" Height="7" Margin="0,0,6,0" VerticalAlignment="Center">
+                                                                <Ellipse.Style>
+                                                                    <Style TargetType="Ellipse">
+                                                                        <Setter Property="Fill" Value="#777777" />
+                                                                        <Style.Triggers>
+                                                                            <DataTrigger Binding="{Binding IsPlaying}" Value="True">
+                                                                                <Setter Property="Fill" Value="#107C41" />
+                                                                            </DataTrigger>
+                                                                        </Style.Triggers>
+                                                                    </Style>
+                                                                </Ellipse.Style>
+                                                            </Ellipse>
+                                                            <ui:TextBlock FontSize="11" Foreground="{DynamicResource TextFillColorSecondaryBrush}">
+                                                                <ui:TextBlock.Style>
+                                                                    <Style TargetType="ui:TextBlock">
+                                                                        <Setter Property="Text" Value="{DynamicResource Card_Status_Stopped}" />
+                                                                        <Style.Triggers>
+                                                                            <DataTrigger Binding="{Binding IsPlaying}" Value="True">
+                                                                                <Setter Property="Text" Value="{DynamicResource Card_Status_Active}" />
+                                                                            </DataTrigger>
+                                                                        </Style.Triggers>
+                                                                    </Style>
+                                                                </ui:TextBlock.Style>
+                                                            </ui:TextBlock>
+                                                        </StackPanel>
+                                                    </StackPanel>
+
+                                                    <!-- Right Actions: Badge, Reveal in folder, Delete -->
+                                                    <StackPanel Grid.Column="2" Orientation="Horizontal" VerticalAlignment="Top">
+                                                        <ui:Badge Content="{Binding Extension}" Appearance="Secondary" Margin="0,0,4,0" VerticalAlignment="Center" />
+                                                        <ui:Button Icon="{ui:SymbolIcon FolderOpen20}" Padding="4" Height="26" Width="26" Appearance="Transparent" 
+                                                                   ToolTip="{DynamicResource Card_Tooltip_Reveal}" Click="BtnRevealInFolder_Click" Tag="{Binding}" Margin="0,0,2,0" />
+                                                        <ui:Button Icon="{ui:SymbolIcon Delete20}" Padding="4" Height="26" Width="26" Appearance="Transparent" 
+                                                                   ToolTip="{DynamicResource Card_Tooltip_Delete}" Click="BtnDeleteAnimation_Click" Tag="{Binding}" />
+                                                    </StackPanel>
+                                                </Grid>
+
+                                                <!-- Controls: Sliders and Checkboxes -->
+                                                <StackPanel Grid.Row="1" Margin="0,0,0,12">
+                                                    <!-- Slider Opacity -->
+                                                    <Grid Margin="0,0,0,2">
+                                                        <ui:TextBlock Text="{DynamicResource Card_Opacity}" FontSize="11" Foreground="{DynamicResource TextFillColorSecondaryBrush}" />
+                                                        <ui:TextBlock Text="{Binding ElementName=SliderAlpha, Path=Value, StringFormat={}{0:P0}}" 
+                                                                      FontSize="11" HorizontalAlignment="Right" Foreground="{DynamicResource TextFillColorSecondaryBrush}" />
+                                                    </Grid>
+                                                    <Slider x:Name="SliderAlpha" Minimum="0.1" Maximum="1.0" Value="{Binding Alpha, Mode=TwoWay}" 
+                                                            TickFrequency="0.01" ValueChanged="SliderAlpha_ValueChanged" Tag="{Binding}" />
+
+                                                    <!-- Slider Scale (1% - 1000% of Screen) -->
+                                                    <Grid Margin="0,6,0,2">
+                                                        <ui:TextBlock Text="{DynamicResource Card_Scale}" FontSize="11" Foreground="{DynamicResource TextFillColorSecondaryBrush}" />
+                                                        <ui:TextBlock Text="{Binding ElementName=SliderScale, Path=Value, StringFormat={}{0:F0}%}" 
+                                                                      FontSize="11" HorizontalAlignment="Right" FontWeight="SemiBold" Foreground="{DynamicResource TextFillColorSecondaryBrush}" />
+                                                    </Grid>
+                                                    <Slider x:Name="SliderScale" Minimum="1" Maximum="1000" Value="{Binding Scale, Mode=TwoWay}" 
+                                                            TickFrequency="1" ValueChanged="SliderScale_ValueChanged" Tag="{Binding}" />
+
+                                                    <!-- Checkboxes -->
+                                                    <WrapPanel Orientation="Horizontal" Margin="0,6,0,0">
+                                                        <CheckBox Content="{DynamicResource Card_AlwaysOnTop}" IsChecked="{Binding AlwaysOnTop, Mode=TwoWay}" 
+                                                                  Margin="0,0,10,4" Checked="OnSettingChanged" Unchecked="OnSettingChanged" Tag="{Binding}" />
+                                                        <CheckBox Content="{DynamicResource Card_ClickThrough}" IsChecked="{Binding ClickThrough, Mode=TwoWay}" 
+                                                                  Margin="0,0,10,4" Checked="OnSettingChanged" Unchecked="OnSettingChanged" Tag="{Binding}" />
+                                                        <CheckBox Content="{DynamicResource Card_Smoothing}" IsChecked="{Binding Smooth, Mode=TwoWay}" 
+                                                                  Margin="0,0,10,4" Checked="OnSettingChanged" Unchecked="OnSettingChanged" Tag="{Binding}" />
+                                                        <CheckBox Content="{DynamicResource Card_Physics}" IsChecked="{Binding Physics, Mode=TwoWay}" 
+                                                                  Margin="0,0,10,4" Checked="OnSettingChanged" Unchecked="OnSettingChanged" Tag="{Binding}" 
+                                                                  ToolTip="{DynamicResource Card_Physics_Tooltip}" />
+                                                        <CheckBox Content="{DynamicResource Card_ChromaKey}" IsChecked="{Binding ChromaKey, Mode=TwoWay}" 
+                                                                  Margin="0,0,0,4" Checked="OnSettingChanged" Unchecked="OnSettingChanged" Tag="{Binding}" 
+                                                                  ToolTip="{DynamicResource Card_ChromaKey_Tooltip}" />
+                                                    </WrapPanel>
+
+                                                    <!-- Chroma Key Settings Panel -->
+                                                    <Border Visibility="{Binding ChromaKey, Converter={StaticResource BoolToVis}}" 
+                                                            Background="{DynamicResource CardBackgroundFillColorSecondaryBrush}" 
+                                                            CornerRadius="6" Padding="8,6" Margin="0,4,0,0">
+                                                        <StackPanel>
+                                                            <!-- Color and Eyedropper Row -->
+                                                            <Grid Margin="0,0,0,4">
+                                                                <Grid.ColumnDefinitions>
+                                                                    <ColumnDefinition Width="Auto" />
+                                                                    <ColumnDefinition Width="Auto" />
+                                                                    <ColumnDefinition Width="*" />
+                                                                    <ColumnDefinition Width="Auto" />
+                                                                </Grid.ColumnDefinitions>
+                                                                <ui:TextBlock Grid.Column="0" Text="{DynamicResource Card_ChromaColor}" FontSize="11" VerticalAlignment="Center" Margin="0,0,6,0" Foreground="{DynamicResource TextFillColorSecondaryBrush}" />
+                                                                <Border Grid.Column="1" Width="20" Height="20" CornerRadius="4" BorderBrush="{DynamicResource ControlStrokeColorDefaultBrush}" BorderThickness="1" Margin="0,0,6,0"
+                                                                        VerticalAlignment="Center" Background="{Binding ChromaColor, TargetNullValue=White, FallbackValue=White}" />
+                                                                <ui:TextBox Grid.Column="2" Text="{Binding ChromaColor, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" 
+                                                                           FontSize="11" Padding="6,2" VerticalContentAlignment="Center" Margin="0,0,6,0" Tag="{Binding}" TextChanged="ChromaColor_TextChanged" />
+                                                                <ui:Button Grid.Column="3" Content="{DynamicResource Card_Eyedropper}" Icon="{ui:SymbolIcon Color24}" Padding="8,2" Height="26" FontSize="11" Tag="{Binding}" Click="BtnEyedropper_Click" 
+                                                                           ToolTip="{DynamicResource Card_Eyedropper_Tooltip}" />
+                                                            </Grid>
+
+                                                            <!-- Compact Slider Tolerance Row -->
+                                                            <Grid Margin="0,0,0,2">
+                                                                <Grid.ColumnDefinitions>
+                                                                    <ColumnDefinition Width="Auto" />
+                                                                    <ColumnDefinition Width="*" />
+                                                                    <ColumnDefinition Width="32" />
+                                                                </Grid.ColumnDefinitions>
+                                                                <ui:TextBlock Grid.Column="0" Text="{DynamicResource Card_ChromaTolerance}" FontSize="11" VerticalAlignment="Center" Margin="0,0,6,0" Foreground="{DynamicResource TextFillColorSecondaryBrush}" />
+                                                                <Slider Grid.Column="1" x:Name="SliderChromaTolerance" Minimum="1" Maximum="80" Value="{Binding ChromaTolerance, Mode=TwoWay}" 
+                                                                        TickFrequency="1" VerticalAlignment="Center" Margin="0,0,4,0" ValueChanged="SliderChromaTolerance_ValueChanged" Tag="{Binding}" />
+                                                                <ui:TextBlock Grid.Column="2" Text="{Binding ElementName=SliderChromaTolerance, Path=Value, StringFormat={}{0:F0}%}" 
+                                                                              FontSize="11" FontWeight="SemiBold" HorizontalAlignment="Right" VerticalAlignment="Center" Foreground="{DynamicResource TextFillColorSecondaryBrush}" />
+                                                            </Grid>
+
+                                                            <!-- Contiguous mode Checkbox -->
+                                                            <CheckBox Content="{DynamicResource Card_ChromaContiguous}" 
+                                                                      IsChecked="{Binding ChromaContiguous, Mode=TwoWay}" 
+                                                                      FontSize="11" Margin="0,2,0,0" Checked="OnSettingChanged" Unchecked="OnSettingChanged" Tag="{Binding}" 
+                                                                      ToolTip="{DynamicResource Card_ChromaContiguous_Tooltip}" />
+                                                        </StackPanel>
+                                                    </Border>
+                                                </StackPanel>
+
+                                                <!-- Action Button -->
+                                                <Grid Grid.Row="2" VerticalAlignment="Bottom">
+                                                    <ui:Button HorizontalAlignment="Stretch" Click="BtnTogglePlay_Click" Tag="{Binding}" Height="34" CornerRadius="8">
+                                                        <ui:Button.Style>
+                                                            <Style TargetType="ui:Button" BasedOn="{StaticResource {x:Type ui:Button}}">
+                                                                <Setter Property="Appearance" Value="Primary" />
+                                                                <Style.Triggers>
+                                                                    <DataTrigger Binding="{Binding IsPlaying}" Value="True">
+                                                                        <Setter Property="Appearance" Value="Danger" />
+                                                                    </DataTrigger>
+                                                                </Style.Triggers>
+                                                            </Style>
+                                                        </ui:Button.Style>
+                                                        <StackPanel Orientation="Horizontal" HorizontalAlignment="Center" VerticalAlignment="Center">
+                                                            <ui:SymbolIcon Margin="0,0,8,0" FontSize="16">
+                                                                <ui:SymbolIcon.Style>
+                                                                    <Style TargetType="ui:SymbolIcon">
+                                                                        <Setter Property="Symbol" Value="Play24" />
+                                                                        <Style.Triggers>
+                                                                            <DataTrigger Binding="{Binding IsPlaying}" Value="True">
+                                                                                <Setter Property="Symbol" Value="Dismiss24" />
+                                                                            </DataTrigger>
+                                                                        </Style.Triggers>
+                                                                    </Style>
+                                                                </ui:SymbolIcon.Style>
+                                                            </ui:SymbolIcon>
+                                                            <ui:TextBlock FontWeight="SemiBold" FontSize="13" VerticalAlignment="Center">
+                                                                <ui:TextBlock.Style>
+                                                                    <Style TargetType="ui:TextBlock">
+                                                                        <Setter Property="Text" Value="{DynamicResource Card_LaunchOverlay}" />
+                                                                        <Style.Triggers>
+                                                                            <DataTrigger Binding="{Binding IsPlaying}" Value="True">
+                                                                                <Setter Property="Text" Value="{DynamicResource Card_CloseOverlay}" />
+                                                                            </DataTrigger>
+                                                                        </Style.Triggers>
+                                                                    </Style>
+                                                                </ui:TextBlock.Style>
+                                                            </ui:TextBlock>
+                                                        </StackPanel>
+                                                    </ui:Button>
+                                                </Grid>
+                                            </Grid>
+                                        </ui:Card>
+                                    </DataTemplate>
+                                </ItemsControl.ItemTemplate>
+                            </ItemsControl>
+                        </Grid>
+                    </ScrollViewer>
+                </Grid>
+            </TabItem>
+
+            <!-- Tab: Community Hub -->
+            <TabItem Header="{DynamicResource Tab_Community}">
+                <Grid Margin="0,16,0,0">
+                    <StackPanel HorizontalAlignment="Stretch">
+                        <ui:TextBlock Text="{DynamicResource Community_Title}" FontSize="18" FontWeight="SemiBold" Margin="0,0,0,8" />
+                        <ui:TextBlock Text="{DynamicResource Community_Desc}" 
+                                      TextWrapping="Wrap" Foreground="{DynamicResource TextFillColorSecondaryBrush}" Margin="0,0,0,20" />
+                        
+                        <ui:Card Margin="0,0,0,14" Padding="16">
+                            <StackPanel>
+                                <ui:TextBlock Text="{DynamicResource Community_CardTitle}" FontWeight="SemiBold" Margin="0,0,0,4" />
+                                <ui:TextBlock Text="{DynamicResource Community_CardStatus}" Foreground="{DynamicResource TextFillColorSecondaryBrush}" Margin="0,0,0,10" />
+                                <ui:Button Content="{DynamicResource Community_BtnGitHub}" Icon="{ui:SymbolIcon Open24}" Appearance="Secondary" Click="BtnOpenGitHub_Click" HorizontalAlignment="Left" />
+                            </StackPanel>
+                        </ui:Card>
+                    </StackPanel>
+                </Grid>
+            </TabItem>
+
+            <!-- Tab: Tools -->
+            <TabItem Header="{DynamicResource Tab_Tools}" x:Name="TabTools">
+                <Grid Margin="0,16,0,0">
+                    <StackPanel HorizontalAlignment="Stretch">
+                        <ui:TextBlock Text="{DynamicResource Tools_Title}" FontSize="18" FontWeight="SemiBold" Margin="0,0,0,8" />
+                        <ui:TextBlock Text="{DynamicResource Tools_Desc}" 
+                                      Foreground="{DynamicResource TextFillColorSecondaryBrush}" Margin="0,0,0,20" />
+
+                        <ui:Card Margin="0,0,0,12" Padding="14">
+                            <Grid>
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*" />
+                                    <ColumnDefinition Width="Auto" />
+                                </Grid.ColumnDefinitions>
+                                <StackPanel VerticalAlignment="Center" Margin="0,0,16,0">
+                                    <ui:TextBlock Text="{DynamicResource Tools_Chroma_Title}" FontWeight="SemiBold" Margin="0,0,0,4" />
+                                    <ui:TextBlock Text="{DynamicResource Tools_Chroma_Desc}" 
+                                                  TextWrapping="Wrap" Foreground="{DynamicResource TextFillColorSecondaryBrush}" />
+                                </StackPanel>
+                                <ui:Button Grid.Column="1" Content="{DynamicResource Tools_BtnToLibrary}" Icon="{ui:SymbolIcon ArrowRight24}" Appearance="Primary" Click="BtnGoToLibrary_Click" VerticalAlignment="Center" />
+                            </Grid>
+                        </ui:Card>
+
+                        <ui:Card Margin="0,0,0,12" Padding="14">
+                            <Grid>
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*" />
+                                    <ColumnDefinition Width="Auto" />
+                                </Grid.ColumnDefinitions>
+                                <StackPanel VerticalAlignment="Center" Margin="0,0,16,0">
+                                    <ui:TextBlock Text="{DynamicResource Tools_Mp4_Title}" FontWeight="SemiBold" Margin="0,0,0,4" />
+                                    <ui:TextBlock Text="{DynamicResource Tools_Mp4_Desc}" 
+                                                  TextWrapping="Wrap" Foreground="{DynamicResource TextFillColorSecondaryBrush}" />
+                                </StackPanel>
+                                <ui:Badge Grid.Column="1" Content="{DynamicResource Tools_InDev}" Appearance="Secondary" VerticalAlignment="Center" />
+                            </Grid>
+                        </ui:Card>
+
+                        <ui:Card Margin="0,0,0,12" Padding="14">
+                            <Grid>
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*" />
+                                    <ColumnDefinition Width="Auto" />
+                                </Grid.ColumnDefinitions>
+                                <StackPanel VerticalAlignment="Center" Margin="0,0,16,0">
+                                    <ui:TextBlock Text="{DynamicResource Tools_Ai_Title}" FontWeight="SemiBold" Margin="0,0,0,4" />
+                                    <ui:TextBlock Text="{DynamicResource Tools_Ai_Desc}" 
+                                                  TextWrapping="Wrap" Foreground="{DynamicResource TextFillColorSecondaryBrush}" />
+                                </StackPanel>
+                                <ui:Badge Grid.Column="1" Content="{DynamicResource Tools_InDev}" Appearance="Secondary" VerticalAlignment="Center" />
+                            </Grid>
+                        </ui:Card>
+                    </StackPanel>
+                </Grid>
+            </TabItem>
+
+            <!-- Tab: Settings -->
+            <TabItem Header="{DynamicResource Tab_Settings}">
+                <ScrollViewer VerticalScrollBarVisibility="Auto">
+                    <Grid Margin="0,16,0,0">
+                        <StackPanel HorizontalAlignment="Stretch">
+                            <ui:TextBlock Text="{DynamicResource Settings_Title}" FontSize="18" FontWeight="SemiBold" Margin="0,0,0,16" />
+
+                            <!-- ITEM #1: Language Selector (Язык интерфейса) -->
+                            <ui:Card Margin="0,0,0,12" Padding="14">
+                                <Grid>
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*" />
+                                        <ColumnDefinition Width="220" />
+                                    </Grid.ColumnDefinitions>
+                                    <StackPanel VerticalAlignment="Center" Margin="0,0,16,0">
+                                        <ui:TextBlock Text="{DynamicResource Settings_Language_Title}" FontWeight="SemiBold" Margin="0,0,0,4" />
+                                        <ui:TextBlock Text="{DynamicResource Settings_Language_Desc}" 
+                                                      TextWrapping="Wrap" Foreground="{DynamicResource TextFillColorSecondaryBrush}" />
+                                    </StackPanel>
+                                    <ComboBox x:Name="CmbLanguage" Grid.Column="1" VerticalAlignment="Center" HorizontalAlignment="Stretch" SelectionChanged="CmbLanguage_SelectionChanged">
+                                        <ComboBoxItem Tag="en" Content="English (US)" />
+                                        <ComboBoxItem Tag="ru" Content="Русский (RU)" />
+                                    </ComboBox>
+                                </Grid>
+                            </ui:Card>
+
+                            <!-- ITEM #2: System Tray and Startup -->
+                            <ui:Card Margin="0,0,0,12" Padding="14">
+                                <StackPanel>
+                                    <ui:TextBlock Text="{DynamicResource Settings_Tray_Title}" FontWeight="SemiBold" Margin="0,0,0,8" />
+                                    <CheckBox x:Name="ChkMinimizeToTray" Content="{DynamicResource Settings_MinimizeToTray}" Margin="0,0,0,8" Click="OnConfigSettingChanged" />
+                                    <CheckBox x:Name="ChkStartMinimized" Content="{DynamicResource Settings_StartMinimized}" Margin="0,0,0,8" Click="OnConfigSettingChanged" />
+                                    <CheckBox x:Name="ChkAutoStart" Content="{DynamicResource Settings_AutoStart}" Margin="0,0,0,8" Click="OnConfigSettingChanged" />
+                                    <CheckBox x:Name="ChkRestoreOverlays" Content="{DynamicResource Settings_RestoreOverlays}" Margin="0,0,0,8" Click="OnConfigSettingChanged" />
+                                    <CheckBox x:Name="ChkAggressiveMemory" Content="{DynamicResource Settings_AggressiveMemory}" Margin="0,0,0,4" Click="OnConfigSettingChanged" />
+                                </StackPanel>
+                            </ui:Card>
+
+                            <!-- ITEM #3: Profile and Storage -->
+                            <ui:Card Margin="0,0,0,12" Padding="14">
+                                <StackPanel>
+                                    <ui:TextBlock Text="{DynamicResource Settings_Profile_Title}" FontWeight="SemiBold" Margin="0,0,0,4" />
+                                    <ui:TextBlock Text="{DynamicResource Settings_Profile_Desc}" 
+                                                  Foreground="{DynamicResource TextFillColorSecondaryBrush}" TextWrapping="Wrap" Margin="0,0,0,10" />
+                                    <StackPanel Orientation="Horizontal">
+                                        <ui:Button Content="{DynamicResource Settings_BtnSaveProfile}" Appearance="Primary" Click="BtnSaveConfig_Click" Margin="0,0,12,0" />
+                                        <ui:TextBlock x:Name="TxtSaveStatus" VerticalAlignment="Center" Foreground="{DynamicResource TextFillColorSecondaryBrush}" />
+                                    </StackPanel>
+                                </StackPanel>
+                            </ui:Card>
+
+                            <!-- ITEM #4: Core Status -->
+                            <ui:Card Margin="0,0,0,12" Padding="14">
+                                <StackPanel>
+                                    <ui:TextBlock Text="{DynamicResource Settings_Core_Title}" FontWeight="SemiBold" Margin="0,0,0,4" />
+                                    <ui:TextBlock x:Name="TxtCoreStatus" Text="{DynamicResource Status_Connecting}" 
+                                                  Foreground="{DynamicResource TextFillColorSecondaryBrush}" Margin="0,0,0,8" />
+                                    <StackPanel Orientation="Horizontal">
+                                        <ui:Button Content="{DynamicResource Settings_BtnRestartCore}" Appearance="Secondary" Click="BtnRestartCore_Click" Margin="0,0,10,0" />
+                                        <ui:Button Content="{DynamicResource Settings_BtnTrimMemory}" Appearance="Secondary" Click="BtnTrimMemory_Click" />
+                                    </StackPanel>
+                                </StackPanel>
+                            </ui:Card>
+
+                            <!-- ITEM #5: About -->
+                            <ui:Card Margin="0,0,0,12" Padding="14">
+                                <StackPanel>
+                                    <ui:TextBlock Text="{DynamicResource Settings_About_Title}" FontWeight="SemiBold" Margin="0,0,0,4" />
+                                    <ui:TextBlock Text="{DynamicResource Settings_About_Desc}" 
+                                                  Foreground="{DynamicResource TextFillColorSecondaryBrush}" TextWrapping="Wrap" Margin="0,0,0,6" />
+                                    <ui:TextBlock Text="{DynamicResource Settings_About_License}" FontSize="12" Foreground="{DynamicResource TextFillColorSecondaryBrush}" />
+                                </StackPanel>
+                            </ui:Card>
+                        </StackPanel>
+                    </Grid>
+                </ScrollViewer>
+            </TabItem>
+        </TabControl>
+
+        <!-- Status Bar -->
+        <Border Grid.Row="2" Background="{DynamicResource CardBackgroundFillColorDefaultBrush}" Padding="16,8" BorderThickness="0,1,0,0" BorderBrush="{DynamicResource CardStrokeColorDefaultBrush}">
+            <Grid>
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="Auto" />
+                </Grid.ColumnDefinitions>
+                <ui:TextBlock x:Name="TxtStatusBar" Text="{DynamicResource Status_Initializing}" FontSize="12" Foreground="{DynamicResource TextFillColorSecondaryBrush}" />
+                <ui:TextBlock Grid.Column="1" Text="OpenAnima v0.1.0-alpha" FontSize="12" Foreground="{DynamicResource TextFillColorTertiaryBrush}" />
+            </Grid>
+        </Border>
+    </Grid>
+</Window>
