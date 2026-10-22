@@ -20,6 +20,7 @@ Cargo.lock.bak
 
 # Releases binaries (publish artifacts)
 releases/
+videos/
 
 # OS generated files
 Thumbs.db

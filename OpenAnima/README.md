@@ -56,8 +56,17 @@ Comparison against the original Steam commercial application (`Steam AppID: 3474
 
 ## Visual Showcase & Screenshots
 
-### 1. OpenAnima Library (English Default & Russian Interface)
-Responsive auto-stretching card grid, smooth opacity and scale sliders, compact chroma key panel, and rounded controls:
+### 1. Live Desktop Overlay in Action
+Transparent borderless character animations running concurrently along screen edges over any wallpaper or DirectX/Vulkan game with zero background boxes, zero flicker, and zero FPS drop:
+
+<p align="center">
+  <img src="docs/images/openanima_desktop_action.png" alt="OpenAnima Desktop Overlay in Action" width="90%" />
+</p>
+
+---
+
+### 2. OpenAnima Library (English Default & Russian Interface)
+Responsive auto-stretching card grid, real-time opacity and scale sliders, compact chroma key panel, and rounded controls:
 
 | English (Default) | Russian Interface |
 | :---: | :---: |
@@ -65,8 +74,17 @@ Responsive auto-stretching card grid, smooth opacity and scale sliders, compact 
 
 ---
 
-### 2. Settings: Interface Language is Item #1
-Language selector is prominently placed as **Card #1** at the very top of Settings. Switching takes effect immediately across all windows, tabs, status bar, and tray menu without restarting:
+### 3. Real-time Chroma Key with Text Protection
+Built directly into each library card. Boundary flood-fill removes outer green/white background on the fly while **protecting inner whites (eyes, labels, text)**:
+
+| English Controls (Active Overlay) | Russian Controls (Active Overlay) |
+| :---: | :---: |
+| ![OpenAnima Chroma EN](docs/images/openanima_chromakey_live.png) | ![OpenAnima Chroma RU](docs/images/openanima_chromakey_live_ru.png) |
+
+---
+
+### 4. Settings: Interface Language is Item #1
+Language selector is prominently placed as **Card #1** at the very top of Settings. Dynamic switching takes effect immediately across all windows, tabs, status bar, and tray menu without restarting:
 
 <p align="center">
   <img src="docs/images/openanima_settings_en.png" alt="OpenAnima Settings Language Item 1" width="85%" />
@@ -74,7 +92,7 @@ Language selector is prominently placed as **Card #1** at the very top of Settin
 
 ---
 
-### 3. Real Memory Benchmark: 4 Active Overlays = 16.9 MB RAM
+### 5. Real Memory Benchmark: 4 Active Overlays = 16.9 MB RAM
 Verified Rust microcore memory consumption in Windows Task Manager running 4 concurrent active character overlays on screen:
 
 <p align="center">
@@ -83,16 +101,7 @@ Verified Rust microcore memory consumption in Windows Task Manager running 4 con
 
 ---
 
-### 4. Real-time Chroma Key with Text Protection
-Built directly into each library card. Boundary flood-fill removes outer green/white background while **protecting inner whites (eyes, text, labels)**:
-
-<p align="center">
-  <img src="docs/images/openanima_chromakey_live.png" alt="OpenAnima Live Chroma Key" width="60%" />
-</p>
-
----
-
-### 5. Legacy Original Interface (Steam AnimaEngine)
+### 6. Legacy Original Interface (Steam AnimaEngine)
 For visual comparison — original PySide6/Kivy interface:
 
 | Original Workshop | Original Creator Tools |
