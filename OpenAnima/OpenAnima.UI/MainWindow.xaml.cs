@@ -174,6 +174,8 @@ public partial class MainWindow : Window
         {
             _config.Language = lang;
             LocalizationService.SetLanguage(lang);
+            UpdateActiveBadgeText();
+            _ = RefreshCoreStatusAsync();
             QueueSaveConfig();
         }
     }
