@@ -108,6 +108,13 @@ public class AnimationItem : INotifyPropertyChanged
         set => SetField(ref _physics, value);
     }
 
+    private bool _bouncy = true;
+    public bool Bouncy
+    {
+        get => _bouncy;
+        set => SetField(ref _bouncy, value);
+    }
+
     private bool _chromaKey = false;
     private string _chromaColor = "#FFFFFF";
     private double _chromaTolerance = 15.0;

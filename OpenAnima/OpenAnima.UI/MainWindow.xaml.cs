@@ -273,6 +273,7 @@ public partial class MainWindow : Window
                             AlwaysOnTop = saved.AlwaysOnTop,
                             ClickThrough = saved.ClickThrough,
                             Physics = saved.Physics,
+                            Bouncy = saved.Bouncy,
                             ChromaKey = saved.ChromaKey,
                             ChromaColor = !string.IsNullOrEmpty(saved.ChromaColor) ? saved.ChromaColor : "#FFFFFF",
                             ChromaTolerance = saved.ChromaTolerance > 0 ? saved.ChromaTolerance : 15.0,
@@ -466,6 +467,7 @@ public partial class MainWindow : Window
             alwaysOnTop: item.AlwaysOnTop,
             clickThrough: item.ClickThrough,
             physics: item.Physics,
+            bouncy: item.Bouncy,
             chromaKey: item.ChromaKey,
             chromaColor: item.ChromaColor,
             chromaTolerance: item.ChromaTolerance / 100.0,
@@ -560,22 +562,31 @@ public partial class MainWindow : Window
 
     private async void OnSettingChanged(object sender, RoutedEventArgs e)
     {
-        if (sender is FrameworkElement { Tag: AnimationItem item } && item.IsPlaying && item.OverlayId.HasValue)
+        if (sender is FrameworkElement { Tag: AnimationItem item })
         {
-            await _animationService.UpdateAsync(
-                item.OverlayId.Value,
-                scale: item.Scale / 100.0,
-                smooth: item.Smooth,
-                alwaysOnTop: item.AlwaysOnTop,
-                clickThrough: item.ClickThrough,
-                physics: item.Physics,
-                chromaKey: item.ChromaKey,
-                chromaColor: item.ChromaColor,
-                chromaTolerance: item.ChromaTolerance / 100.0,
-                chromaContiguous: item.ChromaContiguous
-            );
+            if (item.Physics && item.ClickThrough && sender is CheckBox { IsChecked: true } cb && cb.ToolTip?.ToString()?.Contains("по умолчанию") == true)
+            {
+                item.ClickThrough = false;
+            }
+
+            if (item.IsPlaying && item.OverlayId.HasValue)
+            {
+                await _animationService.UpdateAsync(
+                    item.OverlayId.Value,
+                    scale: item.Scale / 100.0,
+                    smooth: item.Smooth,
+                    alwaysOnTop: item.AlwaysOnTop,
+                    clickThrough: item.ClickThrough,
+                    physics: item.Physics,
+                    bouncy: item.Bouncy,
+                    chromaKey: item.ChromaKey,
+                    chromaColor: item.ChromaColor,
+                    chromaTolerance: item.ChromaTolerance / 100.0,
+                    chromaContiguous: item.ChromaContiguous
+                );
+            }
+            QueueSaveConfig();
         }
-        QueueSaveConfig();
     }
 
     private void SliderChromaTolerance_ValueChanged(object sender, RoutedPropertyChangedEventArgs<double> e)
@@ -828,6 +839,7 @@ public partial class MainWindow : Window
             AlwaysOnTop = a.AlwaysOnTop,
             ClickThrough = a.ClickThrough,
             Physics = a.Physics,
+            Bouncy = a.Bouncy,
             ChromaKey = a.ChromaKey,
             ChromaColor = a.ChromaColor,
             ChromaTolerance = a.ChromaTolerance,

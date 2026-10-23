@@ -209,6 +209,10 @@
                                                         <CheckBox Content="{DynamicResource Card_Physics}" IsChecked="{Binding Physics, Mode=TwoWay}" 
                                                                   Margin="0,0,10,4" Checked="OnSettingChanged" Unchecked="OnSettingChanged" Tag="{Binding}" 
                                                                   ToolTip="{DynamicResource Card_Physics_Tooltip}" />
+                                                        <CheckBox Content="{DynamicResource Card_Bouncy}" IsChecked="{Binding Bouncy, Mode=TwoWay}" 
+                                                                  Margin="0,0,10,4" Checked="OnSettingChanged" Unchecked="OnSettingChanged" Tag="{Binding}" 
+                                                                  ToolTip="{DynamicResource Card_Bouncy_Tooltip}" 
+                                                                  Visibility="{Binding Physics, Converter={StaticResource BoolToVis}}" />
                                                         <CheckBox Content="{DynamicResource Card_ChromaKey}" IsChecked="{Binding ChromaKey, Mode=TwoWay}" 
                                                                   Margin="0,0,0,4" Checked="OnSettingChanged" Unchecked="OnSettingChanged" Tag="{Binding}" 
                                                                   ToolTip="{DynamicResource Card_ChromaKey_Tooltip}" />

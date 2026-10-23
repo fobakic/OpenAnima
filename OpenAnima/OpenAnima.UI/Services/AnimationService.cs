@@ -23,6 +23,7 @@ public class AnimationService
         bool alwaysOnTop = true,
         bool clickThrough = false,
         bool physics = false,
+        bool bouncy = true,
         bool chromaKey = false,
         string chromaColor = "#FFFFFF",
         double chromaTolerance = 0.15,
@@ -42,6 +43,7 @@ public class AnimationService
             ["always_on_top"] = alwaysOnTop,
             ["click_through"] = clickThrough,
             ["physics"] = physics,
+            ["bouncy"] = bouncy,
             ["chroma_key"] = chromaKey,
             ["chroma_color"] = chromaColor,
             ["chroma_tolerance"] = chromaTolerance,
@@ -80,6 +82,7 @@ public class AnimationService
         bool? alwaysOnTop = null,
         bool? clickThrough = null,
         bool? physics = null,
+        bool? bouncy = null,
         bool? visible = null,
         bool? chromaKey = null,
         string? chromaColor = null,
@@ -95,6 +98,7 @@ public class AnimationService
         if (alwaysOnTop.HasValue) param["always_on_top"] = alwaysOnTop.Value;
         if (clickThrough.HasValue) param["click_through"] = clickThrough.Value;
         if (physics.HasValue) param["physics"] = physics.Value;
+        if (bouncy.HasValue) param["bouncy"] = bouncy.Value;
         if (visible.HasValue) param["visible"] = visible.Value;
         if (chromaKey.HasValue) param["chroma_key"] = chromaKey.Value;
         if (!string.IsNullOrEmpty(chromaColor)) param["chroma_color"] = chromaColor;
