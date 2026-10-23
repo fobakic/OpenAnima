@@ -45,7 +45,7 @@
                 <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
                     <Image Source="Assets/openanima.png" Width="26" Height="26" Margin="0,0,10,0" VerticalAlignment="Center" RenderOptions.BitmapScalingMode="HighQuality" />
                     <ui:TextBlock Text="OpenAnima" FontSize="20" FontWeight="Bold" VerticalAlignment="Center" Margin="0,0,10,0" />
-                    <ui:Badge Content="v0.1-alpha" Appearance="Primary" VerticalAlignment="Center" />
+                    <ui:Badge Content="v0.1.1-alpha" Appearance="Primary" VerticalAlignment="Center" />
                     <ui:TextBlock Text="{DynamicResource Header_Tagline}" FontSize="13" Foreground="{DynamicResource TextFillColorSecondaryBrush}" VerticalAlignment="Center" Margin="10,0,0,0" />
                 </StackPanel>
 
@@ -472,7 +472,7 @@
                     <ColumnDefinition Width="Auto" />
                 </Grid.ColumnDefinitions>
                 <ui:TextBlock x:Name="TxtStatusBar" Text="{DynamicResource Status_Initializing}" FontSize="12" Foreground="{DynamicResource TextFillColorSecondaryBrush}" />
-                <ui:TextBlock Grid.Column="1" Text="OpenAnima v0.1.0-alpha" FontSize="12" Foreground="{DynamicResource TextFillColorTertiaryBrush}" />
+                <ui:TextBlock Grid.Column="1" Text="OpenAnima v0.1.1-alpha" FontSize="12" Foreground="{DynamicResource TextFillColorTertiaryBrush}" />
             </Grid>
         </Border>
     </Grid>

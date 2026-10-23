@@ -1,13 +1,13 @@
 # ==============================================================================
 # OpenAnima — Automated Build and Packaging Script
 # Produces:
-#   1. Portable ZIP (OpenAnima-v0.1.0-alpha-portable.zip)
-#   2. Standalone Single-File EXE (OpenAnima-v0.1.0-alpha-standalone.exe)
-#   3. Self-Contained Single-File EXE (OpenAnima-v0.1.0-alpha-selfcontained.exe)
+#   1. Portable ZIP (OpenAnima-v0.1.1-alpha-portable.zip)
+#   2. Standalone Single-File EXE (OpenAnima-v0.1.1-alpha-standalone.exe)
+#   3. Self-Contained Single-File EXE (OpenAnima-v0.1.1-alpha-selfcontained.exe)
 # ==============================================================================
 
 param(
-    [string]$Version = "0.1.0-alpha",
+    [string]$Version = "0.1.1-alpha",
     [switch]$SkipSelfContained = $false
 )
 
