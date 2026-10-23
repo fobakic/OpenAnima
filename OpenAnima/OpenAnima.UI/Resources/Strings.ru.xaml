@@ -42,6 +42,8 @@
     <sys:String x:Key="Card_Smoothing">Сглаживание</sys:String>
     <sys:String x:Key="Card_Physics">Физика</sys:String>
     <sys:String x:Key="Card_Physics_Tooltip">Гравитация, падение на панель задач, бросок мышкой (по умолчанию выкл)</sys:String>
+    <sys:String x:Key="Card_Bouncy">Пружинить</sys:String>
+    <sys:String x:Key="Card_Bouncy_Tooltip">Мягкий пружинящий отскок при падении и ударах (можно выключить)</sys:String>
     <sys:String x:Key="Card_ChromaKey">Хромакей (фон)</sys:String>
     <sys:String x:Key="Card_ChromaKey_Tooltip">Удаление однотонного фона на лету</sys:String>
     <sys:String x:Key="Card_ChromaColor">Цвет фона:</sys:String>

@@ -231,6 +231,7 @@ impl Core {
         let always_on_top = params.get("always_on_top").and_then(Value::as_bool).unwrap_or(true);
         let click_through = params.get("click_through").and_then(Value::as_bool).unwrap_or(true);
         let physics = params.get("physics").and_then(Value::as_bool).unwrap_or(false);
+        let bouncy = params.get("bouncy").and_then(Value::as_bool).unwrap_or(true);
         let chroma_key = params.get("chroma_key").and_then(Value::as_bool).unwrap_or(false);
         let chroma_color = parse_hex_color(params.get("chroma_color").and_then(Value::as_str)).unwrap_or([255, 255, 255]);
         let chroma_tolerance = params.get("chroma_tolerance").and_then(Value::as_f64).unwrap_or(0.15) as f32;
@@ -267,6 +268,7 @@ impl Core {
             always_on_top,
             click_through,
             physics,
+            bouncy,
             chroma,
             label,
         ) {
@@ -326,6 +328,9 @@ impl Core {
         if let Some(value) = params.get("physics").and_then(Value::as_bool) {
             overlay.set_physics(value);
         }
+        if let Some(value) = params.get("bouncy").and_then(Value::as_bool) {
+            overlay.set_bouncy(value);
+        }
         if let Some(value) = params.get("visible").and_then(Value::as_bool) {
             overlay.set_visible(value);
         }
@@ -376,6 +381,7 @@ impl Core {
                     "always_on_top": o.always_on_top,
                     "click_through": o.click_through,
                     "physics": o.physics.enabled,
+                    "bouncy": o.physics.bouncy,
                     "is_grounded": o.physics.is_grounded,
                     "chroma_key": o.chroma.enabled,
                     "chroma_color": format!("#{:02X}{:02X}{:02X}", o.chroma.color_rgb[0], o.chroma.color_rgb[1], o.chroma.color_rgb[2]),

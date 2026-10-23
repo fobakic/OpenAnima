@@ -18,9 +18,9 @@ use std::sync::Arc;
 use windows::core::{w, PCWSTR};
 use windows::Win32::Foundation::{COLORREF, HINSTANCE, HWND, LPARAM, LRESULT, POINT, RECT, SIZE, WPARAM};
 use windows::Win32::Graphics::Gdi::{
-    CreateCompatibleDC, CreateDIBSection, DeleteDC, DeleteObject, HBRUSH, HBITMAP, HDC, HGDIOBJ,
-    SelectObject, AC_SRC_ALPHA, AC_SRC_OVER, BI_RGB, BITMAPINFO, BITMAPINFOHEADER, BLENDFUNCTION,
-    DIB_RGB_COLORS,
+    CreateCompatibleDC, CreateDIBSection, DeleteDC, DeleteObject, GetMonitorInfoW, HBRUSH, HBITMAP,
+    HDC, HGDIOBJ, MonitorFromWindow, SelectObject, AC_SRC_ALPHA, AC_SRC_OVER, BI_RGB, BITMAPINFO,
+    BITMAPINFOHEADER, BLENDFUNCTION, DIB_RGB_COLORS, MONITORINFO, MONITOR_DEFAULTTONEAREST,
 };
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows::Win32::UI::WindowsAndMessaging::{
@@ -188,10 +188,32 @@ pub fn get_desktop_workarea() -> RECT {
     }
 }
 
-/// Dynamic pet physics state: gravity and toss momentum.
+pub fn get_desktop_workarea_for_hwnd(hwnd: HWND) -> RECT {
+    if !hwnd.0.is_null() {
+        unsafe {
+            let hmonitor = MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST);
+            if !hmonitor.0.is_null() {
+                let mut info = MONITORINFO {
+                    cbSize: std::mem::size_of::<MONITORINFO>() as u32,
+                    ..Default::default()
+                };
+                if GetMonitorInfoW(hmonitor, &mut info).as_bool() {
+                    let rc = info.rcWork;
+                    if rc.right > rc.left && rc.bottom > rc.top {
+                        return rc;
+                    }
+                }
+            }
+        }
+    }
+    get_desktop_workarea()
+}
+
+/// Dynamic pet physics state: gravity, mouse toss momentum, and springy bounce.
 #[derive(Clone, Debug)]
 pub struct PetPhysics {
     pub enabled: bool,
+    pub bouncy: bool,
     pub vx: f64,
     pub vy: f64,
     pub is_dragging: bool,
@@ -200,12 +222,15 @@ pub struct PetPhysics {
     pub last_drag_time: std::time::Instant,
     pub is_grounded: bool,
     pub last_tick: std::time::Instant,
+    pub spring_amp: f64,
+    pub spring_phase: f64,
 }
 
 impl Default for PetPhysics {
     fn default() -> Self {
         Self {
             enabled: false, // OFF by default as requested!
+            bouncy: true,  // When physics is turned on, spring bounce is enabled by default (toggleable)
             vx: 0.0,
             vy: 0.0,
             is_dragging: false,
@@ -214,6 +239,8 @@ impl Default for PetPhysics {
             last_drag_time: std::time::Instant::now(),
             is_grounded: false,
             last_tick: std::time::Instant::now(),
+            spring_amp: 0.0,
+            spring_phase: 0.0,
         }
     }
 }
@@ -238,6 +265,8 @@ pub struct Overlay {
     pub click_through: bool,
     pub visible: bool,
     pub timer: usize,
+    pub base_interval_ms: u32,
+    pub current_interval_ms: u32,
     pub label: String,
     pub next_due: std::time::Instant,
 
@@ -262,6 +291,30 @@ impl Overlay {
         self.height
     }
 
+    pub fn update_timer_speed(&mut self) {
+        if self.virtual_only || self.hwnd.0.is_null() {
+            return;
+        }
+        let needs_fast_timer = self.physics.enabled
+            && (!self.physics.is_grounded || self.physics.is_dragging || self.physics.spring_amp > 0.3);
+
+        let target_ms = if needs_fast_timer {
+            16 // 60 FPS for smooth physics motion & spring bounce
+        } else {
+            self.base_interval_ms
+        };
+
+        if target_ms != self.current_interval_ms {
+            self.current_interval_ms = target_ms;
+            unsafe {
+                if self.timer != 0 {
+                    let _ = KillTimer(self.hwnd, self.timer);
+                }
+                self.timer = SetTimer(self.hwnd, TIMER_PRESENT, target_ms, None);
+            }
+        }
+    }
+
     pub fn set_physics(&mut self, enabled: bool) {
         self.physics.enabled = enabled;
         if enabled {
@@ -269,7 +322,20 @@ impl Overlay {
             self.physics.is_dragging = false;
             self.physics.vx = 0.0;
             self.physics.vy = 0.0;
+            self.physics.spring_amp = 0.0;
+            self.physics.spring_phase = 0.0;
             self.physics.last_tick = std::time::Instant::now();
+        } else {
+            self.physics.is_grounded = true;
+            self.physics.spring_amp = 0.0;
+        }
+        self.update_timer_speed();
+    }
+
+    pub fn set_bouncy(&mut self, bouncy: bool) {
+        self.physics.bouncy = bouncy;
+        if !bouncy {
+            self.physics.spring_amp = 0.0;
         }
     }
 
@@ -295,37 +361,55 @@ impl Overlay {
             return;
         }
 
-        if self.physics.is_grounded {
-            return;
-        }
-
-        let work = get_desktop_workarea();
+        let work = get_desktop_workarea_for_hwnd(self.hwnd);
         let min_x = work.left;
         let max_x = (work.right - self.width).max(min_x);
         let min_y = work.top;
         let max_y = (work.bottom - self.height).max(min_y);
 
+        if self.physics.is_grounded {
+            if self.physics.bouncy && self.physics.spring_amp > 0.3 {
+                self.physics.spring_phase += 28.0 * dt;
+                self.physics.spring_amp *= (1.0 - 9.0 * dt).max(0.0);
+                let bounce_lift = (self.physics.spring_phase.sin().abs()) * self.physics.spring_amp;
+                let target_y = (max_y as f64 - bounce_lift).round() as i32;
+                if target_y != self.y {
+                    self.move_to(self.x, target_y);
+                }
+            } else {
+                self.physics.spring_amp = 0.0;
+                if self.y != max_y {
+                    self.move_to(self.x, max_y);
+                }
+                if self.current_interval_ms != self.base_interval_ms {
+                    self.update_timer_speed();
+                }
+            }
+            return;
+        }
+
         let mut x = self.x as f64;
         let mut y = self.y as f64;
 
-        // Apply gravity: 1800 px/s^2 gives a snappy, cute desktop pet drop
-        self.physics.vy += 1800.0 * dt;
+        // Apply gravity: 2200 px/s^2 gives a snappy, responsive desktop pet drop
+        self.physics.vy += 2200.0 * dt;
         // Air resistance
-        self.physics.vx *= (1.0 - 0.6 * dt).max(0.0);
+        self.physics.vx *= (1.0 - 0.7 * dt).max(0.0);
 
         x += self.physics.vx * dt;
         y += self.physics.vy * dt;
 
         // Bounce on left/right screen edges
+        let wall_restitution = if self.physics.bouncy { 0.65 } else { 0.20 };
         if x < min_x as f64 {
             x = min_x as f64;
-            self.physics.vx = -self.physics.vx * 0.45;
+            self.physics.vx = -self.physics.vx * wall_restitution;
             if self.physics.vx > 10.0 {
                 self.flip_x = true;
             }
         } else if x > max_x as f64 {
             x = max_x as f64;
-            self.physics.vx = -self.physics.vx * 0.45;
+            self.physics.vx = -self.physics.vx * wall_restitution;
             if self.physics.vx < -10.0 {
                 self.flip_x = false;
             }
@@ -334,21 +418,43 @@ impl Overlay {
         // Ceiling clamp
         if y < min_y as f64 {
             y = min_y as f64;
-            self.physics.vy = 0.0;
+            let ceiling_restitution = if self.physics.bouncy { 0.45 } else { 0.10 };
+            self.physics.vy = self.physics.vy.abs() * ceiling_restitution;
         }
 
         // Landing on floor (taskbar top edge)
         if y >= max_y as f64 {
             y = max_y as f64;
-            if self.physics.vy > 180.0 {
-                // One or two cute bounces upon hard landing
-                self.physics.vy = -self.physics.vy * 0.25;
-                self.physics.vx *= 0.5;
+            let impact_speed = self.physics.vy;
+
+            if self.physics.bouncy {
+                if impact_speed > 160.0 {
+                    // Elastic rebound like a rubber spring
+                    self.physics.vy = -impact_speed * 0.60;
+                    self.physics.vx *= 0.75;
+                    self.physics.spring_amp = (impact_speed * 0.04).clamp(3.0, 20.0);
+                    self.physics.spring_phase = 0.0;
+                } else {
+                    // Settle on taskbar
+                    self.physics.vy = 0.0;
+                    self.physics.vx = 0.0;
+                    self.physics.is_grounded = true;
+                    if impact_speed > 30.0 {
+                        self.physics.spring_amp = (impact_speed * 0.03).clamp(2.0, 8.0);
+                        self.physics.spring_phase = 0.0;
+                    }
+                }
             } else {
-                // Fully settled on the taskbar floor - sitting still, wandering removed
-                self.physics.vy = 0.0;
-                self.physics.vx = 0.0;
-                self.physics.is_grounded = true;
+                // Inelastic (bouncy = false)
+                if impact_speed > 250.0 {
+                    self.physics.vy = -impact_speed * 0.15;
+                    self.physics.vx *= 0.4;
+                } else {
+                    self.physics.vy = 0.0;
+                    self.physics.vx = 0.0;
+                    self.physics.is_grounded = true;
+                    self.physics.spring_amp = 0.0;
+                }
             }
         }
 
@@ -356,6 +462,10 @@ impl Overlay {
         let new_iy = y.round() as i32;
         if new_ix != self.x || new_iy != self.y {
             self.move_to(new_ix, new_iy);
+        }
+
+        if self.physics.is_grounded && self.physics.spring_amp <= 0.3 {
+            self.update_timer_speed();
         }
     }
 
@@ -776,6 +886,7 @@ impl OverlayManager {
         always_on_top: bool,
         click_through: bool,
         physics: bool,
+        bouncy: bool,
         chroma: ChromaKeyConfig,
         label: String,
     ) -> Result<OverlayId, String> {
@@ -801,6 +912,8 @@ impl OverlayManager {
             scale,
         );
 
+        let base_interval = (1000 / fps.max(1)).max(1) as u32;
+
         if headless_enabled() {
             // No window, no DIB: the frames are only decoded and cached.
             let overlay = Overlay {
@@ -814,7 +927,7 @@ impl OverlayManager {
                 scale,
                 smooth,
                 flip_x: false,
-                physics: PetPhysics { enabled: physics, ..Default::default() },
+                physics: PetPhysics { enabled: physics, bouncy, ..Default::default() },
                 chroma,
                 screen_h,
                 alpha: 1.0,
@@ -822,6 +935,8 @@ impl OverlayManager {
                 click_through,
                 visible: true,
                 timer: 0,
+                base_interval_ms: base_interval,
+                current_interval_ms: base_interval,
                 label,
                 next_due: std::time::Instant::now(),
                 mem_dc: HDC::default(),
@@ -924,7 +1039,7 @@ impl OverlayManager {
             scale,
             smooth,
             flip_x: false,
-            physics: PetPhysics { enabled: physics, ..Default::default() },
+            physics: PetPhysics { enabled: physics, bouncy, ..Default::default() },
             chroma,
             screen_h,
             alpha: 1.0,
@@ -932,6 +1047,8 @@ impl OverlayManager {
             click_through,
             visible: true,
             timer: 0,
+            base_interval_ms: base_interval,
+            current_interval_ms: base_interval,
             label,
             next_due: std::time::Instant::now(),
             mem_dc,
@@ -947,11 +1064,13 @@ impl OverlayManager {
 
         self.overlays.insert(id, overlay);
         if let Some(overlay) = self.overlays.get_mut(&id) {
-            let interval = (1000 / fps.max(1)).max(1) as u32;
-            overlay.timer = unsafe { SetTimer(hwnd, TIMER_PRESENT, interval, None) };
+            overlay.timer = unsafe { SetTimer(hwnd, TIMER_PRESENT, base_interval, None) };
             overlay.next_due = std::time::Instant::now();
             overlay.present();
             overlay.apply_topmost();
+            if overlay.physics.enabled {
+                overlay.update_timer_speed();
+            }
         }
         Ok(id)
     }
@@ -1049,6 +1168,7 @@ const IDM_TOGGLE_TOPMOST: usize = 301;
 const IDM_TOGGLE_FLIP: usize = 302;
 const IDM_TOGGLE_CLICKTHROUGH: usize = 303;
 const IDM_TOGGLE_PHYSICS: usize = 304;
+const IDM_TOGGLE_BOUNCY: usize = 305;
 
 const IDM_HIDE: usize = 401;
 const IDM_CLOSE: usize = 402;
@@ -1115,7 +1235,7 @@ unsafe fn show_overlay_context_menu(hwnd: HWND, pt: POINT) {
         return;
     }
 
-    let (label, scale, alpha, always_on_top, click_through, flip_x, physics_enabled) = {
+    let (label, scale, alpha, always_on_top, click_through, flip_x, physics_enabled, bouncy_enabled) = {
         let mgr = &mut *manager;
         let overlay = match mgr.overlays.get_mut(&id) {
             Some(o) => o,
@@ -1129,6 +1249,7 @@ unsafe fn show_overlay_context_menu(hwnd: HWND, pt: POINT) {
             overlay.click_through,
             overlay.flip_x,
             overlay.physics.enabled,
+            overlay.physics.bouncy,
         )
     };
 
@@ -1178,6 +1299,9 @@ unsafe fn show_overlay_context_menu(hwnd: HWND, pt: POINT) {
     add_menu_check(hmenu, IDM_TOGGLE_FLIP, "Отразить зеркально (По горизонтали)", flip_x);
     add_menu_check(hmenu, IDM_TOGGLE_CLICKTHROUGH, "Клик насквозь (Click-through)", click_through);
     add_menu_check(hmenu, IDM_TOGGLE_PHYSICS, "⚡ Физика и гравитация (по умолчанию выкл)", physics_enabled);
+    if physics_enabled {
+        add_menu_check(hmenu, IDM_TOGGLE_BOUNCY, "🌀 Пружинящий отскок (Spring bounce)", bouncy_enabled);
+    }
     add_separator(hmenu);
 
     // Actions
@@ -1241,6 +1365,12 @@ unsafe fn show_overlay_context_menu(hwnd: HWND, pt: POINT) {
                 o.set_physics(!cur);
             }
         }
+        IDM_TOGGLE_BOUNCY => {
+            if let Some(o) = mgr.overlays.get_mut(&id) {
+                let cur = o.physics.bouncy;
+                o.set_bouncy(!cur);
+            }
+        }
         IDM_HIDE => {
             if let Some(o) = mgr.overlays.get_mut(&id) {
                 o.set_visible(false);
@@ -1294,6 +1424,9 @@ unsafe extern "system" fn overlay_wnd_proc(
                         overlay.physics.last_drag_time = std::time::Instant::now();
                         overlay.physics.vx = 0.0;
                         overlay.physics.vy = 0.0;
+                        overlay.physics.spring_amp = 0.0;
+                        overlay.physics.spring_phase = 0.0;
+                        overlay.update_timer_speed();
                     }
                 }
             }
@@ -1353,21 +1486,28 @@ unsafe extern "system" fn overlay_wnd_proc(
                             overlay.physics.vx = 0.0;
                             overlay.physics.vy = 0.0;
                         } else {
-                            // Toss velocity
-                            overlay.physics.vx = overlay.physics.vx.clamp(-2500.0, 2500.0);
-                            overlay.physics.vy = overlay.physics.vy.clamp(-2500.0, 2500.0);
+                            // Toss velocity with dynamic impulse multiplier
+                            overlay.physics.vx = (overlay.physics.vx * 1.25).clamp(-3200.0, 3200.0);
+                            overlay.physics.vy = (overlay.physics.vy * 1.25).clamp(-3200.0, 3200.0);
                         }
 
-                        let work = get_desktop_workarea();
-                        let max_y = (work.bottom - overlay.height).max(work.top);
-                        if overlay.y >= max_y && overlay.physics.vy.abs() < 100.0 {
-                            overlay.y = max_y;
+                        if !overlay.physics.enabled {
                             overlay.physics.is_grounded = true;
                             overlay.physics.vx = 0.0;
                             overlay.physics.vy = 0.0;
                         } else {
-                            overlay.physics.is_grounded = false;
+                            let work = get_desktop_workarea_for_hwnd(overlay.hwnd);
+                            let max_y = (work.bottom - overlay.height).max(work.top);
+                            if overlay.y >= max_y && overlay.physics.vy.abs() < 100.0 {
+                                overlay.y = max_y;
+                                overlay.physics.is_grounded = true;
+                                overlay.physics.vx = 0.0;
+                                overlay.physics.vy = 0.0;
+                            } else {
+                                overlay.physics.is_grounded = false;
+                            }
                         }
+                        overlay.update_timer_speed();
                     }
                 }
             }

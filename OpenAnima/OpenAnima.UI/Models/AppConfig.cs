@@ -25,6 +25,7 @@ public class AnimationConfigItem
     public bool AlwaysOnTop { get; set; } = true;
     public bool ClickThrough { get; set; } = false;
     public bool Physics { get; set; } = false;
+    public bool Bouncy { get; set; } = true;
     public bool ChromaKey { get; set; } = false;
     public string ChromaColor { get; set; } = "#FFFFFF";
     public double ChromaTolerance { get; set; } = 15.0;
