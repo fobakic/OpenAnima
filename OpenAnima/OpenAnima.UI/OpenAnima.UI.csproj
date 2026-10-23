@@ -11,7 +11,9 @@
     <AssemblyTitle>OpenAnima</AssemblyTitle>
     <Product>OpenAnima</Product>
     <Description>Open-source lightweight game overlay engine for Windows</Description>
-    <Version>0.1.0-alpha</Version>
+    <Version>0.1.1-alpha</Version>
+    <AssemblyVersion>0.1.1.0</AssemblyVersion>
+    <FileVersion>0.1.1.0</FileVersion>
   </PropertyGroup>
 
   <ItemGroup>
