@@ -16,7 +16,7 @@ use std::sync::atomic::{AtomicPtr, AtomicU16, AtomicU64, Ordering};
 use std::sync::Arc;
 
 use windows::core::{w, PCWSTR};
-use windows::Win32::Foundation::{COLORREF, HANDLE, HINSTANCE, HWND, LPARAM, LRESULT, POINT, RECT, SIZE, WPARAM};
+use windows::Win32::Foundation::{COLORREF, HINSTANCE, HWND, LPARAM, LRESULT, POINT, RECT, SIZE, WPARAM};
 use windows::Win32::Graphics::Gdi::{
     CreateCompatibleDC, CreateDIBSection, DeleteDC, DeleteObject, HBRUSH, HBITMAP, HDC, HGDIOBJ,
     SelectObject, AC_SRC_ALPHA, AC_SRC_OVER, BI_RGB, BITMAPINFO, BITMAPINFOHEADER, BLENDFUNCTION,
@@ -26,7 +26,7 @@ use windows::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows::Win32::UI::WindowsAndMessaging::{
     CreateWindowExW, DefWindowProcW, DestroyWindow, GetSystemMetrics, GetWindowLongPtrW,
     GetWindowRect, KillTimer, RegisterClassW, SetTimer, SetWindowLongPtrW, SetWindowPos,
-    UpdateLayeredWindow, HCURSOR, HICON, HWND_NOTOPMOST, HWND_TOPMOST, SM_CXSCREEN, SM_CYSCREEN,
+    UpdateLayeredWindow, HICON, HWND_NOTOPMOST, HWND_TOPMOST, SM_CXSCREEN, SM_CYSCREEN,
     SystemParametersInfoW, SPI_GETWORKAREA, SYSTEM_PARAMETERS_INFO_UPDATE_FLAGS,
     SWP_FRAMECHANGED, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, SWP_NOZORDER, SWP_SHOWWINDOW, SWP_HIDEWINDOW,
     ULW_ALPHA, WINDOW_EX_STYLE, WNDCLASS_STYLES, WM_DESTROY, WM_TIMER, WM_NCHITTEST, WM_MOVE,
@@ -35,7 +35,7 @@ use windows::Win32::UI::WindowsAndMessaging::{
     AppendMenuW, CreatePopupMenu, DestroyMenu, FindWindowW, GetCursorPos, PostMessageW,
     RegisterWindowMessageW, SetForegroundWindow, ShowWindow, TrackPopupMenu, HMENU, MENU_ITEM_FLAGS,
     MF_CHECKED, MF_DISABLED, MF_GRAYED, MF_POPUP, MF_SEPARATOR, MF_STRING, MF_UNCHECKED,
-    SW_HIDE, SW_RESTORE, SW_SHOWNOACTIVATE, TPM_RETURNCMD, TPM_RIGHTBUTTON, TRACK_POPUP_MENU_FLAGS, WM_CONTEXTMENU,
+    SW_HIDE, SW_RESTORE, SW_SHOWNOACTIVATE, TPM_RETURNCMD, TPM_RIGHTBUTTON, WM_CONTEXTMENU,
     WM_NCRBUTTONDOWN, WM_NCRBUTTONUP, WM_RBUTTONDOWN, WM_RBUTTONUP, WM_NULL,
 };
 
@@ -44,8 +44,8 @@ use crate::media::{apply_chroma_key, ChromaKeyConfig, FrameSet};
 /// Timer id used for the per-overlay presentation tick.
 const TIMER_PRESENT: usize = 1;
 
-/// Diagnostics: set `ANIMA_CORE_PRESENT=0` to skip the actual blit, or
-/// `ANIMA_CORE_TOPMOST=0` to skip re-asserting the always-on-top flag.
+/// Diagnostics: set `OPENANIMA_CORE_PRESENT=0` to skip the actual blit, or
+/// `OPENANIMA_CORE_TOPMOST=0` to skip re-asserting the always-on-top flag.
 /// Both exist so a memory regression can be attributed to a single stage.
 fn env_flag(name: &str) -> bool {
     std::env::var(name)
@@ -56,13 +56,13 @@ fn env_flag(name: &str) -> bool {
 fn presenting_enabled() -> bool {
     use std::sync::OnceLock;
     static FLAG: OnceLock<bool> = OnceLock::new();
-    *FLAG.get_or_init(|| env_flag("ANIMA_CORE_PRESENT"))
+    *FLAG.get_or_init(|| env_flag("OPENANIMA_CORE_PRESENT") && env_flag("ANIMA_CORE_PRESENT"))
 }
 
 fn topmost_enabled() -> bool {
     use std::sync::OnceLock;
     static FLAG: OnceLock<bool> = OnceLock::new();
-    *FLAG.get_or_init(|| env_flag("ANIMA_CORE_TOPMOST"))
+    *FLAG.get_or_init(|| env_flag("OPENANIMA_CORE_TOPMOST") && env_flag("ANIMA_CORE_TOPMOST"))
 }
 
 /// Row order of the DIB used as the `UpdateLayeredWindow` source.
@@ -958,7 +958,7 @@ impl OverlayManager {
 
     /// Destroys an overlay window and releases its resources.
     pub fn destroy(&mut self, id: OverlayId) {
-        if let Some(mut overlay) = self.overlays.remove(&id) {
+        if let Some(overlay) = self.overlays.remove(&id) {
             if overlay.virtual_only {
                 return;
             }

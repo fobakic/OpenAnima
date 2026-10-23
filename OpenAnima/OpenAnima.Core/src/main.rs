@@ -1,25 +1,25 @@
-//! AnimaCore â€” the native runtime for AnimaEngine.
+//! OpenAnima Core — the native high-performance runtime for OpenAnima.
 //!
-//! One process hosts every overlay window, decodes the animations, renders
-//! them with per-pixel alpha and (optionally) runs the trigger engine. The
-//! Python shell drives it over a named pipe.
+//! One process hosts every overlay window, decodes animations with zero-copy,
+//! and renders them with per-pixel alpha over games and desktop via Win32.
+//! The C# WPF-UI drives it over a local secure named pipe.
 //!
 //! Usage:
-//!   anima-core                      start the service
-//!   anima-core --version            print the version
-//!   anima-core --selftest FILE      decode FILE and print its properties
-//!   anima-core --selftest-dir DIR   decode every animation in DIR
+//!   openanima-core                  start the service
+//!   openanima-core --version        print the version
+//!   openanima-core --selftest FILE  decode FILE and print its properties
 
 mod app;
 mod ipc;
 mod media;
 mod proto;
+#[cfg(feature = "triggers")]
 mod trigger;
 mod win;
 
 use std::sync::Arc;
 
-use windows::Win32::Foundation::{HANDLE, HWND, WAIT_EVENT, WAIT_FAILED, WAIT_OBJECT_0};
+use windows::Win32::Foundation::{HANDLE, HWND, WAIT_FAILED, WAIT_OBJECT_0};
 use windows::Win32::UI::WindowsAndMessaging::{
     DispatchMessageW, MsgWaitForMultipleObjects, PeekMessageW, PostQuitMessage, SetTimer,
     TranslateMessage, MSG, PM_REMOVE, QS_ALLINPUT, WM_QUIT, WM_TIMER,
@@ -30,6 +30,7 @@ use win::overlay::OverlayManager;
 
 /// Timer ids (timers with a null window post to the thread queue).
 const TIMER_COMMAND: usize = 1;
+#[cfg(feature = "triggers")]
 const TIMER_TRIGGER: usize = 2;
 const TIMER_TOPMOST: usize = 3;
 
@@ -37,7 +38,7 @@ fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
 
     if args.iter().any(|a| a == "--version" || a == "-V") {
-        println!("anima-core {}", env!("CARGO_PKG_VERSION"));
+        println!("openanima-core {}", env!("CARGO_PKG_VERSION"));
         return;
     }
 
@@ -128,11 +129,13 @@ fn run() -> Result<(), String> {
     unsafe {
         // Null-window timers post WM_TIMER to this thread's queue.
         SetTimer(HWND::default(), TIMER_COMMAND, 10, None);
+        #[cfg(feature = "triggers")]
         SetTimer(HWND::default(), TIMER_TRIGGER, 60, None);
         SetTimer(HWND::default(), TIMER_TOPMOST, 500, None);
     }
 
     let mut msg = MSG::default();
+    #[cfg(feature = "triggers")]
     let mut last_trigger_tick = 0u64;
 
     loop {
@@ -162,6 +165,7 @@ fn run() -> Result<(), String> {
             if msg.message == WM_TIMER {
                 match msg.wParam.0 {
                     TIMER_COMMAND => drain_commands(&mut core, &server),
+                    #[cfg(feature = "triggers")]
                     TIMER_TRIGGER => {
                         let now = std::time::SystemTime::now()
                             .duration_since(std::time::UNIX_EPOCH)
@@ -213,6 +217,7 @@ fn drain_commands(core: &mut Core, server: &Arc<ipc::IpcServer>) {
 }
 
 /// Advances the trigger engine and notifies clients about fired triggers.
+#[cfg(feature = "triggers")]
 fn tick_triggers(core: &mut Core, server: &Arc<ipc::IpcServer>) {
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)

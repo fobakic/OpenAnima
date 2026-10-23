@@ -1,0 +1,50 @@
+name: CI & Build Pipeline
+
+on:
+  push:
+    branches: [ main ]
+    tags: [ 'v*' ]
+  pull_request:
+    branches: [ main ]
+  workflow_dispatch:
+
+jobs:
+  test-and-build:
+    name: Build & Verify (Windows)
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Setup .NET 8 SDK
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+
+      - name: Rust Unit Tests (Default Features)
+        run: cargo test --verbose
+        working-directory: OpenAnima/OpenAnima.Core
+
+      - name: Rust Unit Tests (All Features)
+        run: cargo test --all-features --verbose
+        working-directory: OpenAnima/OpenAnima.Core
+
+      - name: Build C# .NET 8 UI (Release)
+        run: dotnet build OpenAnima/OpenAnima.UI/OpenAnima.UI.csproj -c Release
+
+      - name: Run Automated Release Builder
+        run: powershell -ExecutionPolicy Bypass -File ./build.ps1 -SkipSelfContained
+
+      - name: Upload Release Binaries as Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: OpenAnima-Windows-x64
+          path: |
+            releases/*.exe
+            releases/*.zip
+            releases/SHA256SUMS.txt
+          if-no-files-found: error

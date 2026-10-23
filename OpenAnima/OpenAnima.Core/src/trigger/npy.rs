@@ -82,10 +82,14 @@ pub fn parse_npy(raw: &[u8]) -> Result<NpyArray, String> {
 /// Pulls a quoted string value out of the `.npy` header dict.
 fn extract_quoted(header: &str, key: &str) -> Option<String> {
     let pos = header.find(key)?;
-    let rest = &header[pos + key.len()..];
-    let start = rest.find('\'')? + 1;
-    let end = rest[start..].find('\'')? + start;
-    Some(rest[start..end].to_string())
+    let after_key = &header[pos + key.len()..];
+    let colon_pos = after_key.find(':')?;
+    let after_colon = &after_key[colon_pos + 1..];
+    let quote_start = after_colon.find(|c| c == '\'' || c == '"')?;
+    let quote_char = after_colon.as_bytes()[quote_start] as char;
+    let after_open_quote = &after_colon[quote_start + 1..];
+    let quote_end = after_open_quote.find(quote_char)?;
+    Some(after_open_quote[..quote_end].to_string())
 }
 
 /// Pulls the shape tuple out of the `.npy` header dict.

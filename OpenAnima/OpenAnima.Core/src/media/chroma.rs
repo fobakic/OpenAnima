@@ -133,7 +133,7 @@ fn apply_to_frame(frame: &Frame, cfg: &ChromaKeyConfig) -> Frame {
     let mut visited = vec![false; total];
     let mut queue = VecDeque::with_capacity(w * 2 + h * 2);
 
-    let mut check_and_enqueue = |idx: usize,
+    let check_and_enqueue = |idx: usize,
                                  q: &mut VecDeque<usize>,
                                  vis: &mut [bool],
                                  bg: &mut [bool]| {

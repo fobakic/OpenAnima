@@ -99,7 +99,7 @@ fn decode_gif(path: &Path) -> Result<FrameSet, String> {
     }
 
     let mut canvas = vec![0u8; (width * height * 4) as usize];
-    let mut previous: Option<Vec<u8>> = None;
+    let _previous: Option<Vec<u8>> = None;
     let mut frames: Vec<Frame> = Vec::new();
 
     while let Some(frame) = reader
@@ -196,7 +196,7 @@ fn decode_png(path: &Path) -> Result<FrameSet, String> {
     }
 
     let mut canvas = vec![0u8; (width * height * 4) as usize];
-    let mut previous: Option<Vec<u8>> = None;
+    let _previous: Option<Vec<u8>> = None;
     let mut frames: Vec<Frame> = Vec::new();
     let mut seen_any = false;
 
@@ -448,7 +448,7 @@ mod tests {
     fn premultiply_is_correct() {
         let rgba = [255u8, 128, 64, 128];
         let out = rgba_to_premul_bgra(&rgba);
-        assert_eq!(out[0], 64); // blue * alpha
+        assert_eq!(out[0], 32); // blue * alpha: (64 * 128 + 127) / 255 = 32
         assert_eq!(out[1], 64);
         assert_eq!(out[2], 128);
         assert_eq!(out[3], 128);
