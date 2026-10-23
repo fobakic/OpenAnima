@@ -12,12 +12,14 @@ use serde_json::{json, Value};
 
 use crate::media::{decode_file, ChromaKeyConfig, FrameSet};
 use crate::proto::{Request, Response, PROTOCOL_VERSION};
+#[cfg(feature = "triggers")]
 use crate::trigger::engine::TriggerEngine;
 use crate::win::overlay::{OverlayId, OverlayManager};
 
 /// The whole core state.
 pub struct Core {
     pub overlays: OverlayManager,
+    #[cfg(feature = "triggers")]
     pub triggers: TriggerEngine,
     pub started_at: Instant,
     /// Decoded animations, keyed by absolute path.
@@ -31,6 +33,7 @@ impl Core {
     pub fn new() -> Result<Self, String> {
         Ok(Core {
             overlays: OverlayManager::new(),
+            #[cfg(feature = "triggers")]
             triggers: TriggerEngine::new()?,
             started_at: Instant::now(),
             media_cache: HashMap::new(),
@@ -154,6 +157,7 @@ impl Core {
                 Response::ok(req.id, json!({ "ok": true }))
             }
 
+            #[cfg(feature = "triggers")]
             "trigger.load" => {
                 let dir = params.get("dir").and_then(Value::as_str).unwrap_or_default();
                 if dir.is_empty() {
@@ -164,6 +168,7 @@ impl Core {
                     Err(e) => Response::err(req.id, e),
                 }
             }
+            #[cfg(feature = "triggers")]
             "trigger.start" => {
                 let id = params.get("id").and_then(Value::as_str).unwrap_or_default();
                 match self.triggers.start(id) {
@@ -171,11 +176,13 @@ impl Core {
                     Err(e) => Response::err(req.id, e),
                 }
             }
+            #[cfg(feature = "triggers")]
             "trigger.stop" => {
                 let id = params.get("id").and_then(Value::as_str).unwrap_or_default();
                 self.triggers.stop(id);
                 Response::ok(req.id, json!({ "running": false, "id": id }))
             }
+            #[cfg(feature = "triggers")]
             "trigger.list" => Response::ok(
                 req.id,
                 json!({
@@ -186,6 +193,7 @@ impl Core {
                         .collect::<Vec<_>>(),
                 }),
             ),
+            #[cfg(feature = "triggers")]
             "trigger.status" => {
                 let id = params.get("id").and_then(Value::as_str).unwrap_or_default();
                 Response::ok(
@@ -198,6 +206,7 @@ impl Core {
                     }),
                 )
             }
+            #[cfg(feature = "triggers")]
             "trigger.tick" => {
                 let now = params.get("now_ms").and_then(Value::as_u64).unwrap_or(0);
                 let outcomes = self.triggers.tick(now);

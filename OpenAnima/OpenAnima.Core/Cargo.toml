@@ -4,6 +4,10 @@ version = "0.1.0"
 edition = "2021"
 description = "OpenAnima native core: overlay renderer, media decoder and trigger engine"
 
+[features]
+default = []
+triggers = ["dep:zip"]
+
 [dependencies]
 windows = { version = "0.58", features = [
     "Win32_Foundation",
@@ -15,6 +19,7 @@ windows = { version = "0.58", features = [
     "Win32_System_IO",
     "Win32_System_ProcessStatus",
     "Win32_Security",
+    "Win32_Security_Authorization",
     "Win32_Storage_FileSystem",
     "Win32_System_SystemServices",
 ] }
@@ -22,7 +27,7 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 gif = "0.13"
 png = "0.17"
-zip = { version = "2", default-features = false, features = ["deflate"] }
+zip = { version = "2", default-features = false, features = ["deflate"], optional = true }
 
 [profile.release]
 opt-level = 3

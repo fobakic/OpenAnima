@@ -13,7 +13,11 @@ use std::sync::{Arc, Mutex};
 use std::thread;
 
 use windows::core::HSTRING;
-use windows::Win32::Foundation::{ERROR_PIPE_BUSY, HANDLE};
+use windows::Win32::Foundation::{HANDLE, LocalFree, HLOCAL};
+use windows::Win32::Security::{PSECURITY_DESCRIPTOR, SECURITY_ATTRIBUTES};
+use windows::Win32::Security::Authorization::{
+    ConvertStringSecurityDescriptorToSecurityDescriptorW, SDDL_REVISION_1,
+};
 use windows::Win32::Storage::FileSystem::{
     CreateFileW, ReadFile, WriteFile, FILE_ATTRIBUTE_NORMAL, FILE_GENERIC_READ, FILE_GENERIC_WRITE,
     FILE_SHARE_READ, FILE_SHARE_WRITE, OPEN_EXISTING, PIPE_ACCESS_DUPLEX,
@@ -117,6 +121,31 @@ impl IpcServer {
     }
 }
 
+/// Builds a SECURITY_ATTRIBUTES descriptor granting Full Access to Current User (OW) and Admins (BA).
+/// Prevents unprivileged or other user processes from accessing the pipe.
+fn create_pipe_security() -> (Option<SECURITY_ATTRIBUTES>, PSECURITY_DESCRIPTOR) {
+    let sddl = windows::core::w!("D:P(A;;GA;;;OW)(A;;GA;;;BA)");
+    let mut sd = PSECURITY_DESCRIPTOR::default();
+    let res = unsafe {
+        ConvertStringSecurityDescriptorToSecurityDescriptorW(
+            sddl,
+            SDDL_REVISION_1,
+            &mut sd,
+            None,
+        )
+    };
+    if res.is_ok() && !sd.is_invalid() {
+        let sa = SECURITY_ATTRIBUTES {
+            nLength: std::mem::size_of::<SECURITY_ATTRIBUTES>() as u32,
+            lpSecurityDescriptor: sd.0,
+            bInheritHandle: false.into(),
+        };
+        (Some(sa), sd)
+    } else {
+        (None, PSECURITY_DESCRIPTOR::default())
+    }
+}
+
 fn accept_loop(
     command_tx: &Sender<Command>,
     clients: &Arc<Mutex<Vec<ClientHandle>>>,
@@ -125,12 +154,14 @@ fn accept_loop(
 ) {
     let next_id = AtomicU64::new(1);
     let pipe_name = HSTRING::from(PIPE_NAME);
+    let (sa, sd) = create_pipe_security();
 
     loop {
         if *stop.lock().unwrap() {
             break;
         }
 
+        let sa_ptr = sa.as_ref().map(|s| s as *const _);
         let handle = unsafe {
             CreateNamedPipeW(
                 &pipe_name,
@@ -140,7 +171,7 @@ fn accept_loop(
                 64 * 1024,
                 64 * 1024,
                 0,
-                None,
+                sa_ptr,
             )
         };
 
@@ -175,11 +206,17 @@ fn accept_loop(
         let handle_value = handle.0 as usize;
 
         thread::Builder::new()
-            .name(format!("anima-ipc-client-{client_id}"))
+            .name(format!("openanima-ipc-client-{client_id}"))
             .spawn(move || {
                 serve_client(handle_value, client_id, command_tx, clients, wakeup);
             })
             .ok();
+    }
+
+    if !sd.is_invalid() {
+        unsafe {
+            let _ = LocalFree(HLOCAL(sd.0));
+        }
     }
 }
 
