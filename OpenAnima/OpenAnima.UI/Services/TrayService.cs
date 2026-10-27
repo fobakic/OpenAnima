@@ -113,7 +113,7 @@ public sealed class TrayService : IDisposable
         [
             Path.Combine(baseDir, "Assets", "openanima.ico"),
             Path.GetFullPath(Path.Combine(baseDir, @"..\..\..\Assets\openanima.ico")),
-            @"C:\Users\fobakic\Documents\animka\OpenAnima\OpenAnima.UI\Assets\openanima.ico"
+            Path.Combine(baseDir, "openanima.ico")
         ];
 
         foreach (var path in candidates)

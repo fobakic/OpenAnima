@@ -16,6 +16,8 @@ public class ConfigService
         PropertyNameCaseInsensitive = true
     };
 
+    private static readonly SemaphoreSlim SaveLock = new(1, 1);
+
     private static string ConfigPath =>
         Path.Combine(
             Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
@@ -28,6 +30,10 @@ public class ConfigService
         try
         {
             string path = ConfigPath;
+            if (!File.Exists(path) && File.Exists(path + ".tmp"))
+            {
+                path += ".tmp";
+            }
             if (File.Exists(path))
             {
                 string json = await File.ReadAllTextAsync(path);
@@ -51,6 +57,7 @@ public class ConfigService
 
     public async Task SaveAsync(AppConfig config)
     {
+        await SaveLock.WaitAsync();
         try
         {
             string path = ConfigPath;
@@ -61,8 +68,10 @@ public class ConfigService
             }
 
             string json = JsonSerializer.Serialize(config, JsonOptions);
-            await File.WriteAllTextAsync(path, json);
-            App.Log($"[ConfigService] Config saved to {path}");
+            string tmpPath = path + ".tmp";
+            await File.WriteAllTextAsync(tmpPath, json);
+            File.Move(tmpPath, path, overwrite: true);
+            App.Log($"[ConfigService] Config saved atomically to {path}");
 
             // Apply autostart setting
             SetAutoStart(config.AutoStartWithWindows);
@@ -70,6 +79,40 @@ public class ConfigService
         catch (Exception ex)
         {
             App.Log($"[ConfigService] Error saving config: {ex.Message}");
+        }
+        finally
+        {
+            SaveLock.Release();
+        }
+    }
+
+    public void SaveSync(AppConfig config)
+    {
+        SaveLock.Wait();
+        try
+        {
+            string path = ConfigPath;
+            string? dir = Path.GetDirectoryName(path);
+            if (!string.IsNullOrEmpty(dir) && !Directory.Exists(dir))
+            {
+                Directory.CreateDirectory(dir);
+            }
+
+            string json = JsonSerializer.Serialize(config, JsonOptions);
+            string tmpPath = path + ".tmp";
+            File.WriteAllText(tmpPath, json);
+            File.Move(tmpPath, path, overwrite: true);
+            App.Log($"[ConfigService] Config saved atomically (sync) to {path}");
+
+            SetAutoStart(config.AutoStartWithWindows);
+        }
+        catch (Exception ex)
+        {
+            App.Log($"[ConfigService] Error saving config (sync): {ex.Message}");
+        }
+        finally
+        {
+            SaveLock.Release();
         }
     }
 

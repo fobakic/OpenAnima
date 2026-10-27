@@ -12,7 +12,7 @@
 
 use std::collections::HashMap;
 use std::ffi::c_void;
-use std::sync::atomic::{AtomicPtr, AtomicU16, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicPtr, AtomicU8, AtomicU16, AtomicU64, Ordering};
 use std::sync::Arc;
 
 use windows::core::{w, PCWSTR};
@@ -25,11 +25,12 @@ use windows::Win32::Graphics::Gdi::{
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows::Win32::UI::WindowsAndMessaging::{
     CreateWindowExW, DefWindowProcW, DestroyWindow, GetSystemMetrics, GetWindowLongPtrW,
-    GetWindowRect, KillTimer, RegisterClassW, SetTimer, SetWindowLongPtrW, SetWindowPos,
+    GetWindowRect, RegisterClassW, SetWindowLongPtrW, SetWindowPos,
     UpdateLayeredWindow, HICON, HWND_NOTOPMOST, HWND_TOPMOST, SM_CXSCREEN, SM_CYSCREEN,
     SystemParametersInfoW, SPI_GETWORKAREA, SYSTEM_PARAMETERS_INFO_UPDATE_FLAGS,
     SWP_FRAMECHANGED, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, SWP_NOZORDER, SWP_SHOWWINDOW, SWP_HIDEWINDOW,
-    ULW_ALPHA, WINDOW_EX_STYLE, WNDCLASS_STYLES, WM_DESTROY, WM_TIMER, WM_NCHITTEST, WM_MOVE,
+    SWP_NOREDRAW,
+    ULW_ALPHA, WINDOW_EX_STYLE, WNDCLASS_STYLES, WM_DESTROY, WM_NCHITTEST, WM_MOVE,
     WM_ENTERSIZEMOVE, WM_EXITSIZEMOVE, WM_MOUSEWHEEL, LoadCursorW, IDC_ARROW, WNDCLASSW, WS_EX_LAYERED, WS_EX_TOPMOST,
     WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW, WS_EX_TRANSPARENT, WS_POPUP, GWLP_USERDATA, GWL_EXSTYLE,
     AppendMenuW, CreatePopupMenu, DestroyMenu, FindWindowW, GetCursorPos, PostMessageW,
@@ -40,9 +41,6 @@ use windows::Win32::UI::WindowsAndMessaging::{
 };
 
 use crate::media::{apply_chroma_key, ChromaKeyConfig, FrameSet};
-
-/// Timer id used for the per-overlay presentation tick.
-const TIMER_PRESENT: usize = 1;
 
 /// Diagnostics: set `OPENANIMA_CORE_PRESENT=0` to skip the actual blit, or
 /// `OPENANIMA_CORE_TOPMOST=0` to skip re-asserting the always-on-top flag.
@@ -157,6 +155,50 @@ fn lookup_id(hwnd: isize) -> Option<OverlayId> {
 /// Global handle to the overlay manager, so the window proc can reach it.
 /// Set once during startup, before any window is created.
 static MANAGER: AtomicPtr<OverlayManager> = AtomicPtr::new(std::ptr::null_mut());
+
+thread_local! {
+    static IN_PROGRAMMATIC_MOVE: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+fn with_programmatic_update<F, R>(f: F) -> R
+where
+    F: FnOnce() -> R,
+{
+    IN_PROGRAMMATIC_MOVE.with(|flag| {
+        flag.set(true);
+        let res = f();
+        flag.set(false);
+        res
+    })
+}
+
+static LANG_OVERRIDE: AtomicU8 = AtomicU8::new(0);
+
+extern "system" {
+    fn GetUserDefaultUILanguage() -> u16;
+}
+
+pub fn set_core_language(lang: &str) {
+    if lang.eq_ignore_ascii_case("ru") {
+        LANG_OVERRIDE.store(2, Ordering::Release);
+    } else {
+        LANG_OVERRIDE.store(1, Ordering::Release);
+    }
+}
+
+pub fn is_russian_locale() -> bool {
+    let override_val = LANG_OVERRIDE.load(Ordering::Acquire);
+    if override_val == 1 {
+        return false;
+    }
+    if override_val == 2 {
+        return true;
+    }
+    unsafe {
+        let lang_id = GetUserDefaultUILanguage();
+        (lang_id & 0x3FF) == 0x19
+    }
+}
 
 /// Publishes the manager to the window proc.
 ///
@@ -292,27 +334,7 @@ impl Overlay {
     }
 
     pub fn update_timer_speed(&mut self) {
-        if self.virtual_only || self.hwnd.0.is_null() {
-            return;
-        }
-        let needs_fast_timer = self.physics.enabled
-            && (!self.physics.is_grounded || self.physics.is_dragging || self.physics.spring_amp > 0.3);
-
-        let target_ms = if needs_fast_timer {
-            16 // 60 FPS for smooth physics motion & spring bounce
-        } else {
-            self.base_interval_ms
-        };
-
-        if target_ms != self.current_interval_ms {
-            self.current_interval_ms = target_ms;
-            unsafe {
-                if self.timer != 0 {
-                    let _ = KillTimer(self.hwnd, self.timer);
-                }
-                self.timer = SetTimer(self.hwnd, TIMER_PRESENT, target_ms, None);
-            }
-        }
+        // Ticking is driven centrally by the high-resolution thread timer in the main message loop.
     }
 
     pub fn set_physics(&mut self, enabled: bool) {
@@ -502,7 +524,7 @@ impl Overlay {
 
     /// Blits the current frame into the layered window.
     pub fn present(&mut self) {
-        if self.virtual_only {
+        if self.virtual_only || self.bits.is_null() {
             return;
         }
         if self.frames.frames.is_empty() {
@@ -605,7 +627,7 @@ impl Overlay {
         if self.virtual_only {
             return;
         }
-        unsafe {
+        with_programmatic_update(|| unsafe {
             let _ = SetWindowPos(
                 self.hwnd,
                 None,
@@ -615,7 +637,7 @@ impl Overlay {
                 0,
                 SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE,
             );
-        }
+        });
         self.present();
     }
 
@@ -633,17 +655,21 @@ impl Overlay {
         if self.virtual_only || !topmost_enabled() {
             return;
         }
-        unsafe {
-            let style = GetWindowLongPtrW(self.hwnd, GWL_EXSTYLE) as u32;
-            let mut style = style;
-            if self.always_on_top {
-                style |= WS_EX_TOPMOST.0;
-            } else {
-                style &= !WS_EX_TOPMOST.0;
-            }
-            let _ = SetWindowLongPtrW(self.hwnd, GWL_EXSTYLE, style as isize);
+        with_programmatic_update(|| unsafe {
+            let cur_style = GetWindowLongPtrW(self.hwnd, GWL_EXSTYLE) as u32;
+            let target_topmost = self.always_on_top;
+            let has_topmost = (cur_style & WS_EX_TOPMOST.0) != 0;
 
-            let after = if self.always_on_top { HWND_TOPMOST } else { HWND_NOTOPMOST };
+            if target_topmost != has_topmost {
+                let new_style = if target_topmost {
+                    cur_style | WS_EX_TOPMOST.0
+                } else {
+                    cur_style & !WS_EX_TOPMOST.0
+                };
+                let _ = SetWindowLongPtrW(self.hwnd, GWL_EXSTYLE, new_style as isize);
+            }
+
+            let after = if target_topmost { HWND_TOPMOST } else { HWND_NOTOPMOST };
             let _ = SetWindowPos(
                 self.hwnd,
                 after,
@@ -651,9 +677,9 @@ impl Overlay {
                 0,
                 0,
                 0,
-                SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_SHOWWINDOW | SWP_FRAMECHANGED,
+                SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_NOREDRAW,
             );
-        }
+        });
     }
 
     pub fn set_click_through(&mut self, value: bool) {
@@ -665,7 +691,7 @@ impl Overlay {
         if self.virtual_only {
             return;
         }
-        unsafe {
+        with_programmatic_update(|| unsafe {
             let style = GetWindowLongPtrW(self.hwnd, GWL_EXSTYLE) as u32;
             let mut style = style;
             style |= WS_EX_LAYERED.0 | WS_EX_TOOLWINDOW.0 | WS_EX_NOACTIVATE.0;
@@ -687,7 +713,7 @@ impl Overlay {
                 0,
                 SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE | SWP_FRAMECHANGED,
             );
-        }
+        });
     }
 
     pub fn set_visible(&mut self, value: bool) {
@@ -695,7 +721,7 @@ impl Overlay {
         if self.virtual_only {
             return;
         }
-        unsafe {
+        with_programmatic_update(|| unsafe {
             if value {
                 let _ = ShowWindow(self.hwnd, SW_SHOWNOACTIVATE);
                 let _ = SetWindowPos(
@@ -719,7 +745,7 @@ impl Overlay {
                     SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE | SWP_HIDEWINDOW,
                 );
             }
-        }
+        });
         if value {
             self.apply_topmost();
             self.present();
@@ -744,6 +770,11 @@ impl Overlay {
             return;
         }
 
+        // Recreate DIB section FIRST. If allocation fails, rollback and keep existing dimensions.
+        if !self.recreate_dib(new_w, new_h) {
+            return;
+        }
+
         // Keep center in place
         let delta_w = new_w - self.width;
         let delta_h = new_h - self.height;
@@ -755,10 +786,7 @@ impl Overlay {
         self.height = new_h;
         self.row_bytes = (new_w as usize) * 4;
 
-        // Recreate DIB section
-        self.recreate_dib();
-
-        unsafe {
+        with_programmatic_update(|| unsafe {
             let _ = SetWindowPos(
                 self.hwnd,
                 None,
@@ -768,7 +796,7 @@ impl Overlay {
                 self.height,
                 SWP_NOZORDER | SWP_NOACTIVATE | SWP_FRAMECHANGED,
             );
-        }
+        });
         self.present();
     }
 
@@ -783,21 +811,14 @@ impl Overlay {
         self.present();
     }
 
-    fn recreate_dib(&mut self) {
+    fn recreate_dib(&mut self, target_w: i32, target_h: i32) -> bool {
         unsafe {
-            if !self.old_obj.0.is_null() && !self.mem_dc.is_invalid() {
-                let _ = SelectObject(self.mem_dc, self.old_obj);
-            }
-            if !self.dib.0.is_null() {
-                let _ = DeleteObject(self.dib);
-            }
-
             let bottom_up = dib_orientation() == DibOrientation::BottomUp;
             let mut bmi = BITMAPINFO {
                 bmiHeader: BITMAPINFOHEADER {
                     biSize: std::mem::size_of::<BITMAPINFOHEADER>() as u32,
-                    biWidth: self.width,
-                    biHeight: if bottom_up { self.height } else { -self.height },
+                    biWidth: target_w,
+                    biHeight: if bottom_up { target_h } else { -target_h },
                     biPlanes: 1,
                     biBitCount: 32,
                     biCompression: BI_RGB.0,
@@ -819,10 +840,20 @@ impl Overlay {
                 None,
                 0,
             );
-            if let Ok(dib) = dib {
-                self.dib = dib;
-                self.old_obj = SelectObject(self.mem_dc, dib);
-                self.bits = bits as *mut u8;
+            match dib {
+                Ok(new_dib) if !new_dib.0.is_null() => {
+                    if !self.old_obj.0.is_null() && !self.mem_dc.is_invalid() {
+                        let _ = SelectObject(self.mem_dc, self.old_obj);
+                    }
+                    if !self.dib.0.is_null() {
+                        let _ = DeleteObject(self.dib);
+                    }
+                    self.dib = new_dib;
+                    self.old_obj = SelectObject(self.mem_dc, new_dib);
+                    self.bits = bits as *mut u8;
+                    true
+                }
+                _ => false,
             }
         }
     }
@@ -1064,7 +1095,6 @@ impl OverlayManager {
 
         self.overlays.insert(id, overlay);
         if let Some(overlay) = self.overlays.get_mut(&id) {
-            overlay.timer = unsafe { SetTimer(hwnd, TIMER_PRESENT, base_interval, None) };
             overlay.next_due = std::time::Instant::now();
             overlay.present();
             overlay.apply_topmost();
@@ -1082,9 +1112,6 @@ impl OverlayManager {
                 return;
             }
             unsafe {
-                if overlay.timer != 0 {
-                    let _ = KillTimer(overlay.hwnd, overlay.timer);
-                }
                 let _ = SetWindowLongPtrW(overlay.hwnd, GWLP_USERDATA, 0);
                 unregister_id(overlay.hwnd.0 as isize);
                 let _ = DestroyWindow(overlay.hwnd);
@@ -1207,12 +1234,18 @@ fn open_ui_settings_window() {
             let _ = PostMessageW(HWND(0xFFFF as _), msg, WPARAM(0), LPARAM(0));
         }
 
-        let title = windows::core::w!("OpenAnima — Легковесный движок оверлеев");
-        if let Ok(wnd) = FindWindowW(None, PCWSTR(title.as_ptr())) {
-            if (wnd.0 as usize) != 0 {
-                let _ = ShowWindow(wnd, SW_RESTORE);
-                let _ = SetForegroundWindow(wnd);
-                return;
+        let titles = [
+            windows::core::w!("OpenAnima — Легковесный движок оверлеев"),
+            windows::core::w!("OpenAnima — Lightweight Desktop Overlay Engine"),
+        ];
+
+        for title in &titles {
+            if let Ok(wnd) = FindWindowW(None, PCWSTR(title.as_ptr())) {
+                if (wnd.0 as usize) != 0 {
+                    let _ = ShowWindow(wnd, SW_RESTORE);
+                    let _ = SetForegroundWindow(wnd);
+                    return;
+                }
             }
         }
 
@@ -1253,6 +1286,8 @@ unsafe fn show_overlay_context_menu(hwnd: HWND, pt: POINT) {
         )
     };
 
+    let ru = is_russian_locale();
+
     let hmenu = match CreatePopupMenu() {
         Ok(m) => m,
         Err(_) => return,
@@ -1263,19 +1298,19 @@ unsafe fn show_overlay_context_menu(hwnd: HWND, pt: POINT) {
 
     // Submenu: Scale
     let scale_menu = CreatePopupMenu().unwrap_or_default();
-    add_menu_radio(scale_menu, IDM_SCALE_10, "10% экрана (Мини)", current_pct == 10);
-    add_menu_radio(scale_menu, IDM_SCALE_15, "15% экрана", current_pct == 15);
-    add_menu_radio(scale_menu, IDM_SCALE_20, "20% экрана (Стандарт)", current_pct == 20);
-    add_menu_radio(scale_menu, IDM_SCALE_30, "30% экрана", current_pct == 30);
-    add_menu_radio(scale_menu, IDM_SCALE_50, "50% экрана (Большой)", current_pct == 50);
-    add_menu_radio(scale_menu, IDM_SCALE_100, "100% экрана (Во весь экран)", current_pct == 100);
+    add_menu_radio(scale_menu, IDM_SCALE_10, if ru { "10% экрана (Мини)" } else { "10% screen (Mini)" }, current_pct == 10);
+    add_menu_radio(scale_menu, IDM_SCALE_15, if ru { "15% экрана" } else { "15% screen" }, current_pct == 15);
+    add_menu_radio(scale_menu, IDM_SCALE_20, if ru { "20% экрана (Стандарт)" } else { "20% screen (Standard)" }, current_pct == 20);
+    add_menu_radio(scale_menu, IDM_SCALE_30, if ru { "30% экрана" } else { "30% screen" }, current_pct == 30);
+    add_menu_radio(scale_menu, IDM_SCALE_50, if ru { "50% экрана (Большой)" } else { "50% screen (Large)" }, current_pct == 50);
+    add_menu_radio(scale_menu, IDM_SCALE_100, if ru { "100% экрана (Во весь экран)" } else { "100% screen (Full size)" }, current_pct == 100);
 
     // Submenu: Alpha
     let alpha_menu = CreatePopupMenu().unwrap_or_default();
-    add_menu_radio(alpha_menu, IDM_ALPHA_100, "100% (Непрозрачно)", current_alpha_pct >= 95);
+    add_menu_radio(alpha_menu, IDM_ALPHA_100, if ru { "100% (Непрозрачно)" } else { "100% (Opaque)" }, current_alpha_pct >= 95);
     add_menu_radio(alpha_menu, IDM_ALPHA_85, "85%", (80..95).contains(&current_alpha_pct));
     add_menu_radio(alpha_menu, IDM_ALPHA_70, "70%", (60..80).contains(&current_alpha_pct));
-    add_menu_radio(alpha_menu, IDM_ALPHA_50, "50% (Полупрозрачно)", current_alpha_pct < 60);
+    add_menu_radio(alpha_menu, IDM_ALPHA_50, if ru { "50% (Полупрозрачно)" } else { "50% (Semi-transparent)" }, current_alpha_pct < 60);
 
     // Header with animation name
     let filename = std::path::Path::new(&label)
@@ -1287,30 +1322,38 @@ unsafe fn show_overlay_context_menu(hwnd: HWND, pt: POINT) {
     add_separator(hmenu);
 
     // Submenus
-    let scale_title = format!("Масштаб (сейчас {}%)", current_pct);
+    let scale_title = if ru {
+        format!("Масштаб (сейчас {}%)", current_pct)
+    } else {
+        format!("Scale (currently {}%)", current_pct)
+    };
     add_submenu(hmenu, scale_menu, &scale_title);
 
-    let alpha_title = format!("Прозрачность (сейчас {}%)", current_alpha_pct);
+    let alpha_title = if ru {
+        format!("Прозрачность (сейчас {}%)", current_alpha_pct)
+    } else {
+        format!("Opacity (currently {}%)", current_alpha_pct)
+    };
     add_submenu(hmenu, alpha_menu, &alpha_title);
     add_separator(hmenu);
 
     // Toggles
-    add_menu_check(hmenu, IDM_TOGGLE_TOPMOST, "Поверх всех окон", always_on_top);
-    add_menu_check(hmenu, IDM_TOGGLE_FLIP, "Отразить зеркально (По горизонтали)", flip_x);
-    add_menu_check(hmenu, IDM_TOGGLE_CLICKTHROUGH, "Клик насквозь (Click-through)", click_through);
-    add_menu_check(hmenu, IDM_TOGGLE_PHYSICS, "⚡ Физика и гравитация (по умолчанию выкл)", physics_enabled);
+    add_menu_check(hmenu, IDM_TOGGLE_TOPMOST, if ru { "Поверх всех окон" } else { "Always on top" }, always_on_top);
+    add_menu_check(hmenu, IDM_TOGGLE_FLIP, if ru { "Отразить зеркально (По горизонтали)" } else { "Flip horizontally" }, flip_x);
+    add_menu_check(hmenu, IDM_TOGGLE_CLICKTHROUGH, if ru { "Клик насквозь (Click-through)" } else { "Click-through" }, click_through);
+    add_menu_check(hmenu, IDM_TOGGLE_PHYSICS, if ru { "⚡ Физика и гравитация (по умолчанию выкл)" } else { "⚡ Physics & gravity (off by default)" }, physics_enabled);
     if physics_enabled {
-        add_menu_check(hmenu, IDM_TOGGLE_BOUNCY, "🌀 Пружинящий отскок (Spring bounce)", bouncy_enabled);
+        add_menu_check(hmenu, IDM_TOGGLE_BOUNCY, if ru { "🌀 Пружинящий отскок (Spring bounce)" } else { "🌀 Spring bounce" }, bouncy_enabled);
     }
     add_separator(hmenu);
 
     // Actions
-    add_menu_item(hmenu, IDM_HIDE, "Скрыть персонажа", MF_STRING);
-    add_menu_item(hmenu, IDM_CLOSE, "Закрыть персонажа", MF_STRING);
+    add_menu_item(hmenu, IDM_HIDE, if ru { "Скрыть персонажа" } else { "Hide character" }, MF_STRING);
+    add_menu_item(hmenu, IDM_CLOSE, if ru { "Закрыть персонажа" } else { "Close character" }, MF_STRING);
     add_separator(hmenu);
 
     // App Control
-    add_menu_item(hmenu, IDM_OPEN_SETTINGS, "⚙️ Панель управления OpenAnima", MF_STRING);
+    add_menu_item(hmenu, IDM_OPEN_SETTINGS, if ru { "⚙️ Панель управления OpenAnima" } else { "⚙️ OpenAnima Control Panel" }, MF_STRING);
 
     let _ = SetForegroundWindow(hwnd);
     let cmd = TrackPopupMenu(
@@ -1434,6 +1477,9 @@ unsafe extern "system" fn overlay_wnd_proc(
         return LRESULT(0);
     }
     if message == WM_MOVE {
+        if IN_PROGRAMMATIC_MOVE.with(|flag| flag.get()) {
+            return LRESULT(0);
+        }
         let mut rect = RECT::default();
         if unsafe { GetWindowRect(hwnd, &mut rect) }.is_ok() {
             let id = lookup_id(hwnd.0 as isize);
@@ -1532,20 +1578,6 @@ unsafe extern "system" fn overlay_wnd_proc(
             }
             return LRESULT(0);
         }
-    }
-    if message == WM_TIMER {
-        if wparam.0 == TIMER_PRESENT {
-            let id = lookup_id(hwnd.0 as isize);
-            if let Some(id) = id {
-                let manager = MANAGER.load(Ordering::Acquire);
-                if !manager.is_null() {
-                    if let Some(overlay) = (*manager).overlays.get_mut(&id) {
-                        overlay.tick();
-                    }
-                }
-            }
-        }
-        return LRESULT(0);
     }
     if message == WM_DESTROY {
         unregister_id(hwnd.0 as isize);

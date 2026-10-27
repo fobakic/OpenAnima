@@ -105,7 +105,13 @@ public class AnimationItem : INotifyPropertyChanged
     public bool Physics
     {
         get => _physics;
-        set => SetField(ref _physics, value);
+        set
+        {
+            if (SetField(ref _physics, value) && value && ClickThrough)
+            {
+                ClickThrough = false;
+            }
+        }
     }
 
     private bool _bouncy = true;

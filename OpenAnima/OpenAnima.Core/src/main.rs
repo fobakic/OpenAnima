@@ -19,20 +19,123 @@ mod win;
 
 use std::sync::Arc;
 
-use windows::Win32::Foundation::{HANDLE, HWND, WAIT_FAILED, WAIT_OBJECT_0};
+use windows::core::{w, PCWSTR};
+use windows::Win32::Foundation::{
+    HANDLE, HINSTANCE, HWND, LPARAM, LRESULT, WAIT_FAILED, WAIT_OBJECT_0, WPARAM,
+};
+use windows::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows::Win32::UI::WindowsAndMessaging::{
-    DispatchMessageW, MsgWaitForMultipleObjects, PeekMessageW, PostQuitMessage, SetTimer,
-    TranslateMessage, MSG, PM_REMOVE, QS_ALLINPUT, WM_QUIT, WM_TIMER,
+    CreateWindowExW, DefWindowProcW, DestroyWindow, DispatchMessageW, GetWindowLongPtrW,
+    KillTimer, MsgWaitForMultipleObjects, PeekMessageW, PostQuitMessage, RegisterClassExW,
+    SetTimer, SetWindowLongPtrW, TranslateMessage, GWLP_USERDATA, HMENU, HWND_MESSAGE,
+    MSG, PM_REMOVE, QS_ALLINPUT, WINDOW_EX_STYLE, WM_QUIT, WM_TIMER, WNDCLASSEXW,
+    WS_OVERLAPPED,
 };
 
 use app::Core;
 use win::overlay::OverlayManager;
 
-/// Timer ids (timers with a null window post to the thread queue).
+/// Timer ids (timers set on the hidden message-only window).
 const TIMER_COMMAND: usize = 1;
 #[cfg(feature = "triggers")]
 const TIMER_TRIGGER: usize = 2;
 const TIMER_TOPMOST: usize = 3;
+
+struct MsgLoopContext {
+    core: *mut Core,
+    server: Arc<ipc::IpcServer>,
+    #[cfg(feature = "triggers")]
+    last_trigger_tick: std::sync::atomic::AtomicU64,
+}
+
+unsafe extern "system" fn msg_wnd_proc(
+    hwnd: HWND,
+    message: u32,
+    wparam: WPARAM,
+    lparam: LPARAM,
+) -> LRESULT {
+    if message == WM_TIMER {
+        let ptr = GetWindowLongPtrW(hwnd, GWLP_USERDATA) as *mut MsgLoopContext;
+        if !ptr.is_null() {
+            let ctx = &mut *ptr;
+            match wparam.0 {
+                TIMER_COMMAND => {
+                    drain_commands(&mut (*ctx.core), &ctx.server);
+                    (*ctx.core).overlays.tick_all();
+                }
+                #[cfg(feature = "triggers")]
+                TIMER_TRIGGER => {
+                    let now = std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .map(|d| d.as_millis() as u64)
+                        .unwrap_or(0);
+                    let last = ctx.last_trigger_tick.load(std::sync::atomic::Ordering::Relaxed);
+                    if now.saturating_sub(last) >= 60 {
+                        ctx.last_trigger_tick.store(now, std::sync::atomic::Ordering::Relaxed);
+                        tick_triggers(&mut (*ctx.core), &ctx.server);
+                    }
+                }
+                TIMER_TOPMOST => {
+                    (*ctx.core).overlays.enforce_topmost();
+                }
+                _ => {}
+            }
+        }
+        return LRESULT(0);
+    }
+    DefWindowProcW(hwnd, message, wparam, lparam)
+}
+
+fn create_message_window(ctx_ptr: *mut MsgLoopContext) -> Result<HWND, String> {
+    unsafe {
+        let hinstance: HINSTANCE = GetModuleHandleW(None)
+            .map_err(|e| format!("GetModuleHandleW failed: {e}"))?
+            .into();
+
+        let class_name = w!("OpenAnimaMsgWindowClass");
+        let wc = WNDCLASSEXW {
+            cbSize: std::mem::size_of::<WNDCLASSEXW>() as u32,
+            style: Default::default(),
+            lpfnWndProc: Some(msg_wnd_proc),
+            cbClsExtra: 0,
+            cbWndExtra: 0,
+            hInstance: hinstance,
+            hIcon: Default::default(),
+            hCursor: Default::default(),
+            hbrBackground: Default::default(),
+            lpszMenuName: PCWSTR::null(),
+            lpszClassName: class_name,
+            hIconSm: Default::default(),
+        };
+
+        let atom = RegisterClassExW(&wc);
+        if atom == 0 {
+            let err = windows::Win32::Foundation::GetLastError();
+            if err.0 != 1410 {
+                return Err(format!("RegisterClassExW failed: {err:?}"));
+            }
+        }
+
+        let hwnd = CreateWindowExW(
+            WINDOW_EX_STYLE::default(),
+            class_name,
+            w!("OpenAnimaMsgWindow"),
+            WS_OVERLAPPED,
+            0,
+            0,
+            0,
+            0,
+            HWND_MESSAGE,
+            HMENU::default(),
+            hinstance,
+            None,
+        )
+        .map_err(|e| format!("CreateWindowExW (HWND_MESSAGE) failed: {e}"))?;
+
+        SetWindowLongPtrW(hwnd, GWLP_USERDATA, ctx_ptr as isize);
+        Ok(hwnd)
+    }
+}
 
 fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
@@ -126,17 +229,25 @@ fn run() -> Result<(), String> {
         std::process::id()
     );
 
-    unsafe {
-        // Null-window timers post WM_TIMER to this thread's queue.
-        SetTimer(HWND::default(), TIMER_COMMAND, 10, None);
+    let mut ctx = Box::new(MsgLoopContext {
+        core: &mut *core,
+        server: server.clone(),
         #[cfg(feature = "triggers")]
-        SetTimer(HWND::default(), TIMER_TRIGGER, 60, None);
-        SetTimer(HWND::default(), TIMER_TOPMOST, 500, None);
+        last_trigger_tick: std::sync::atomic::AtomicU64::new(0),
+    });
+
+    let msg_hwnd = create_message_window(&mut *ctx)?;
+
+    unsafe {
+        // Window-bound timers post to msg_hwnd and are delivered to msg_wnd_proc
+        // even during modal message pumps (TrackPopupMenu, caption-drag, etc.).
+        SetTimer(msg_hwnd, TIMER_COMMAND, 10, None);
+        #[cfg(feature = "triggers")]
+        SetTimer(msg_hwnd, TIMER_TRIGGER, 60, None);
+        SetTimer(msg_hwnd, TIMER_TOPMOST, 500, None);
     }
 
     let mut msg = MSG::default();
-    #[cfg(feature = "triggers")]
-    let mut last_trigger_tick = 0u64;
 
     loop {
         // Sleep until either a window message arrives or an IPC command was
@@ -153,32 +264,15 @@ fn run() -> Result<(), String> {
             std::thread::sleep(std::time::Duration::from_millis(5));
         }
 
-        // Pump window messages (this is also where the timers arrive).
+        // Pump window messages (dispatches WM_TIMER to msg_wnd_proc and window messages to overlay_wnd_proc).
         loop {
             let has_message = unsafe { PeekMessageW(&mut msg, None, 0, 0, PM_REMOVE) };
             if !has_message.as_bool() {
                 break;
             }
             if msg.message == WM_QUIT {
+                core.quit = true;
                 break;
-            }
-            if msg.message == WM_TIMER {
-                match msg.wParam.0 {
-                    TIMER_COMMAND => drain_commands(&mut core, &server),
-                    #[cfg(feature = "triggers")]
-                    TIMER_TRIGGER => {
-                        let now = std::time::SystemTime::now()
-                            .duration_since(std::time::UNIX_EPOCH)
-                            .map(|d| d.as_millis() as u64)
-                            .unwrap_or(0);
-                        if now.saturating_sub(last_trigger_tick) >= 60 {
-                            last_trigger_tick = now;
-                            tick_triggers(&mut core, &server);
-                        }
-                    }
-                    TIMER_TOPMOST => core.overlays.enforce_topmost(),
-                    _ => {}
-                }
             }
             unsafe {
                 let _ = TranslateMessage(&msg);
@@ -192,6 +286,14 @@ fn run() -> Result<(), String> {
         if core.quit {
             break;
         }
+    }
+
+    unsafe {
+        let _ = KillTimer(msg_hwnd, TIMER_COMMAND);
+        #[cfg(feature = "triggers")]
+        let _ = KillTimer(msg_hwnd, TIMER_TRIGGER);
+        let _ = KillTimer(msg_hwnd, TIMER_TOPMOST);
+        let _ = DestroyWindow(msg_hwnd);
     }
 
     core.overlays.destroy_all();

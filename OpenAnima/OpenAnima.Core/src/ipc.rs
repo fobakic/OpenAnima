@@ -236,41 +236,69 @@ fn serve_client(
     let mut writer = PipeWriter::new(handle);
 
     loop {
-        // Drain any pending events so the client sees notifications while it
-        // is waiting for a reply.
-        while let Ok(event) = event_rx.try_recv() {
-            if write_frame(&mut writer, &event).is_err() {
-                break;
-            }
-        }
-
-        match read_frame(&mut reader) {
-            Ok(Some(req)) => {
-                let (reply_tx, reply_rx) = channel();
-                if command_tx
-                    .send(Command::Request { req, reply: reply_tx })
-                    .is_err()
-                {
+        // Wait for an event or poll for incoming request without blocking indefinitely
+        match event_rx.recv_timeout(std::time::Duration::from_millis(50)) {
+            Ok(event) => {
+                if write_frame(&mut writer, &event).is_err() {
                     break;
                 }
-                // Nudge the UI thread so it answers without waiting for its
-                // next timeout.
-                unsafe {
-                    let _ = SetEvent(HANDLE(wakeup as *mut std::ffi::c_void));
-                }
-                // Block this connection until the UI thread answers. Requests
-                // are answered in order, which keeps the protocol predictable.
-                match reply_rx.recv() {
-                    Ok(resp) => {
-                        if write_frame(&mut writer, &resp).is_err() {
-                            break;
-                        }
+                while let Ok(ev) = event_rx.try_recv() {
+                    if write_frame(&mut writer, &ev).is_err() {
+                        break;
                     }
-                    Err(_) => break,
                 }
             }
-            Ok(None) => break,
-            Err(_) => break,
+            Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {}
+            Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => break,
+        }
+
+        // Check if the client has sent bytes into the pipe
+        let mut bytes_avail = 0u32;
+        let peek_ok = unsafe {
+            windows::Win32::System::Pipes::PeekNamedPipe(
+                handle,
+                None,
+                0,
+                None,
+                Some(&mut bytes_avail),
+                None,
+            )
+        };
+
+        if peek_ok.is_err() {
+            // Client closed the pipe or disconnected
+            break;
+        }
+
+        if bytes_avail >= 4 {
+            match read_frame(&mut reader) {
+                Ok(Some(req)) => {
+                    let (reply_tx, reply_rx) = channel();
+                    if command_tx
+                        .send(Command::Request { req, reply: reply_tx })
+                        .is_err()
+                    {
+                        break;
+                    }
+                    // Nudge the UI thread so it answers without waiting for its
+                    // next timeout.
+                    unsafe {
+                        let _ = SetEvent(HANDLE(wakeup as *mut std::ffi::c_void));
+                    }
+                    // Block this connection until the UI thread answers. Requests
+                    // are answered in order, which keeps the protocol predictable.
+                    match reply_rx.recv() {
+                        Ok(resp) => {
+                            if write_frame(&mut writer, &resp).is_err() {
+                                break;
+                            }
+                        }
+                        Err(_) => break,
+                    }
+                }
+                Ok(None) => break,
+                Err(_) => break,
+            }
         }
     }
 

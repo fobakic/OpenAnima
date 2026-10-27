@@ -19,13 +19,15 @@ public sealed class CoreSupervisor : IDisposable
     private const string PipeName = "openanima-core-v1";
     private const int MaxMemoryMb = 500;
 
+    public event Action<int>? OnCoreExited;
+    public event Action<string, JsonObject?>? OnBroadcastEventReceived;
+
     private Process? _coreProcess;
     private IntPtr _jobHandle = IntPtr.Zero;
     private NamedPipeClientStream? _pipeStream;
-    private BinaryReader? _reader;
-    private BinaryWriter? _writer;
     private readonly SemaphoreSlim _lock = new(1, 1);
     private long _nextId = 1;
+    private bool _isRestarting;
     private bool _disposed;
 
     public bool IsConnected => _pipeStream?.IsConnected == true;
@@ -35,49 +37,70 @@ public sealed class CoreSupervisor : IDisposable
     /// </summary>
     public async Task<bool> EnsureStartedAndConnectedAsync(string? explicitCorePath = null, CancellationToken ct = default)
     {
-        await _lock.WaitAsync(ct);
+        bool connected = false;
+        await _lock.WaitAsync(ct).ConfigureAwait(false);
         try
         {
             if (IsConnected)
                 return true;
 
             // 1. Try connecting to an already running core
-            if (await TryConnectPipeAsync(500, ct))
-                return true;
-
-            // 2. Locate core binary
-            string coreExe = explicitCorePath ?? FindCoreExecutable();
-            if (!File.Exists(coreExe))
+            if (await TryConnectPipeAsync(500, ct).ConfigureAwait(false))
             {
-                Debug.WriteLine($"[CoreSupervisor] Core executable not found at: {coreExe}");
-                return false;
+                connected = true;
             }
-
-            // 3. Launch process with Job Object limit
-            var startInfo = new ProcessStartInfo
+            else
             {
-                FileName = coreExe,
-                CreateNoWindow = true,
-                UseShellExecute = false,
-                RedirectStandardOutput = false,
-                RedirectStandardError = false
-            };
+                // 2. Locate core binary
+                string coreExe = explicitCorePath ?? FindCoreExecutable();
+                if (!File.Exists(coreExe))
+                {
+                    Debug.WriteLine($"[CoreSupervisor] Core executable not found at: {coreExe}");
+                    return false;
+                }
 
-            _coreProcess = Process.Start(startInfo);
-            if (_coreProcess == null)
-                return false;
+                // 3. Launch process with Job Object limit
+                var startInfo = new ProcessStartInfo
+                {
+                    FileName = coreExe,
+                    CreateNoWindow = true,
+                    UseShellExecute = false,
+                    RedirectStandardOutput = false,
+                    RedirectStandardError = false
+                };
 
-            // Apply Job Object safety limits
-            ApplyJobLimits(_coreProcess.Handle, MaxMemoryMb);
+                _coreProcess = Process.Start(startInfo);
+                if (_coreProcess == null)
+                    return false;
 
-            // 4. Wait for named pipe server to accept connection
-            bool connected = await TryConnectPipeAsync(5000, ct);
-            return connected;
+                _coreProcess.EnableRaisingEvents = true;
+                _coreProcess.Exited += (s, ev) =>
+                {
+                    if (_isRestarting) return;
+                    int exitCode = -1;
+                    try { exitCode = _coreProcess?.ExitCode ?? -1; } catch { }
+                    App.Log($"[CoreSupervisor] Core process exited (code: {exitCode})");
+                    OnCoreExited?.Invoke(exitCode);
+                };
+
+                // Apply Job Object safety limits
+                ApplyJobLimits(_coreProcess.Handle, MaxMemoryMb);
+
+                // 4. Wait for named pipe server to accept connection
+                connected = await TryConnectPipeAsync(5000, ct).ConfigureAwait(false);
+            }
         }
         finally
         {
             _lock.Release();
         }
+
+        if (connected)
+        {
+            _ = SendCommandAsync("core.set_language", new JsonObject { ["lang"] = LocalizationService.CurrentLanguage });
+        }
+
+        return connected;
     }
 
     private async Task<bool> TryConnectPipeAsync(int timeoutMs, CancellationToken ct)
@@ -88,28 +111,24 @@ public sealed class CoreSupervisor : IDisposable
             using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
             timeoutCts.CancelAfter(timeoutMs);
 
-            await pipe.ConnectAsync(timeoutCts.Token);
+            await pipe.ConnectAsync(timeoutCts.Token).ConfigureAwait(false);
             _pipeStream = pipe;
-            _reader = new BinaryReader(pipe);
-            _writer = new BinaryWriter(pipe);
             return true;
         }
         catch
         {
             _pipeStream?.Dispose();
             _pipeStream = null;
-            _reader = null;
-            _writer = null;
             return false;
         }
     }
 
     public async Task<JsonObject?> SendCommandAsync(string cmd, JsonObject? parameters = null, CancellationToken ct = default)
     {
-        await _lock.WaitAsync(ct);
+        await _lock.WaitAsync(ct).ConfigureAwait(false);
         try
         {
-            if (_pipeStream == null || !_pipeStream.IsConnected || _writer == null || _reader == null)
+            if (_pipeStream == null || !_pipeStream.IsConnected)
                 return null;
 
             long id = Interlocked.Increment(ref _nextId);
@@ -121,17 +140,44 @@ public sealed class CoreSupervisor : IDisposable
             };
 
             byte[] jsonBytes = System.Text.Encoding.UTF8.GetBytes(reqObj.ToJsonString());
-            _writer.Write((uint)jsonBytes.Length);
-            _writer.Write(jsonBytes);
-            _writer.Flush();
+            byte[] lenBytes = BitConverter.GetBytes((uint)jsonBytes.Length);
+            await _pipeStream.WriteAsync(lenBytes, 0, 4, ct).ConfigureAwait(false);
+            await _pipeStream.WriteAsync(jsonBytes, 0, jsonBytes.Length, ct).ConfigureAwait(false);
+            await _pipeStream.FlushAsync(ct).ConfigureAwait(false);
 
-            uint length = _reader.ReadUInt32();
-            if (length == 0 || length > 16 * 1024 * 1024)
-                return null;
+            byte[] respLenBuf = new byte[4];
+            while (true)
+            {
+                await _pipeStream.ReadExactlyAsync(respLenBuf, 0, 4, ct).ConfigureAwait(false);
+                uint length = BitConverter.ToUInt32(respLenBuf, 0);
+                if (length == 0 || length > 16 * 1024 * 1024)
+                    return null;
 
-            byte[] respBytes = _reader.ReadBytes((int)length);
-            var node = JsonNode.Parse(respBytes) as JsonObject;
-            return node;
+                byte[] respBytes = new byte[length];
+                await _pipeStream.ReadExactlyAsync(respBytes, 0, (int)length, ct).ConfigureAwait(false);
+                var node = JsonNode.Parse(respBytes) as JsonObject;
+                if (node == null)
+                    continue;
+
+                // Check if this is an unsolicited broadcast event
+                if (node.ContainsKey("event") && !node.ContainsKey("id"))
+                {
+                    string eventName = node["event"]?.ToString() ?? string.Empty;
+                    var eventData = node["data"] as JsonObject;
+                    try
+                    {
+                        OnBroadcastEventReceived?.Invoke(eventName, eventData);
+                    }
+                    catch (Exception ex)
+                    {
+                        Debug.WriteLine($"[CoreSupervisor] Broadcast event error: {ex.Message}");
+                    }
+                    continue;
+                }
+
+                // Response frame
+                return node;
+            }
         }
         catch (Exception ex)
         {
@@ -268,12 +314,13 @@ public sealed class CoreSupervisor : IDisposable
 
     public async Task<bool> RestartCoreAsync(CancellationToken ct = default)
     {
-        await _lock.WaitAsync(ct);
+        _isRestarting = true;
+        await _lock.WaitAsync(ct).ConfigureAwait(false);
         try
         {
             try
             {
-                if (IsConnected && _writer != null)
+                if (IsConnected && _pipeStream != null)
                 {
                     var reqObj = new JsonObject
                     {
@@ -282,17 +329,14 @@ public sealed class CoreSupervisor : IDisposable
                         ["params"] = new JsonObject()
                     };
                     byte[] jsonBytes = System.Text.Encoding.UTF8.GetBytes(reqObj.ToJsonString());
-                    _writer.Write((uint)jsonBytes.Length);
-                    _writer.Write(jsonBytes);
-                    _writer.Flush();
+                    byte[] lenBytes = BitConverter.GetBytes((uint)jsonBytes.Length);
+                    _pipeStream.Write(lenBytes, 0, 4);
+                    _pipeStream.Write(jsonBytes, 0, jsonBytes.Length);
+                    _pipeStream.Flush();
                 }
             }
             catch { }
 
-            _reader?.Dispose();
-            _reader = null;
-            _writer?.Dispose();
-            _writer = null;
             _pipeStream?.Dispose();
             _pipeStream = null;
 
@@ -322,7 +366,9 @@ public sealed class CoreSupervisor : IDisposable
             _lock.Release();
         }
 
-        return await EnsureStartedAndConnectedAsync(ct: ct);
+        bool connected = await EnsureStartedAndConnectedAsync(ct: ct).ConfigureAwait(false);
+        _isRestarting = false;
+        return connected;
     }
 
     public void Dispose()
@@ -339,8 +385,6 @@ public sealed class CoreSupervisor : IDisposable
         }
         catch { }
 
-        _reader?.Dispose();
-        _writer?.Dispose();
         _pipeStream?.Dispose();
 
         if (_jobHandle != IntPtr.Zero)

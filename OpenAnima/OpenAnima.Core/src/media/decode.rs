@@ -1,12 +1,15 @@
 //! Decodes animated media into a list of premultiplied BGRA frames.
 //!
-//! Supported inputs: GIF, PNG, APNG. The output layout matches what
+//! Supported inputs: GIF, PNG, APNG, WEBP. The output layout matches what
 //! `UpdateLayeredWindow` expects for a 32-bit BI_RGB DIB: premultiplied
 //! alpha, blue-first, top-down rows.
 
 use std::fs::File;
 use std::io::BufReader;
 use std::path::Path;
+
+use image::codecs::webp::WebPDecoder;
+use image::{AnimationDecoder, ImageDecoder};
 
 /// One decoded frame, ready to blit.
 #[derive(Clone)]
@@ -76,6 +79,7 @@ pub fn decode_file(path: &Path) -> Result<FrameSet, String> {
     match ext.as_str() {
         "gif" => decode_gif(path),
         "png" | "apng" => decode_png(path),
+        "webp" => decode_webp(path),
         "" => Err("file has no extension".into()),
         other => Err(format!("unsupported media type '{other}'")),
     }
@@ -119,25 +123,28 @@ fn decode_gif(path: &Path) -> Result<FrameSet, String> {
         };
 
         // Paste the frame rectangle onto the canvas.
+        // In GIF, sub-frames only overwrite pixels where alpha != 0.
+        // Transparent pixels (alpha == 0) leave the previous canvas content intact.
         let src: &[u8] = frame.buffer.as_ref();
+        let copy_cols = fw.min(width.saturating_sub(left)) as usize;
         for y in 0..fh {
             let dy = top + y;
             if dy >= height {
                 break;
             }
-            let src_row = (y * fw * 4) as usize;
-            let dst_row = ((dy * width + left) * 4) as usize;
-            let copy_w = fw.min(width.saturating_sub(left)) * 4;
-            if copy_w == 0 {
-                break;
-            }
-            let src_start = src_row.min(src.len());
-            let src_end = (src_start + copy_w as usize).min(src.len());
-            let dst_start = dst_row;
-            let dst_end = (dst_start + (src_end - src_start)).min(canvas.len());
-            if src_end > src_start && dst_end > dst_start {
-                let n = (src_end - src_start).min(dst_end - dst_start);
-                canvas[dst_start..dst_start + n].copy_from_slice(&src[src_start..src_start + n]);
+            let src_row_start = (y * fw * 4) as usize;
+            let dst_row_start = ((dy * width + left) * 4) as usize;
+            let src_row_end = src_row_start + copy_cols * 4;
+            let dst_row_end = dst_row_start + copy_cols * 4;
+
+            if src_row_end <= src.len() && dst_row_end <= canvas.len() {
+                let src_slice = &src[src_row_start..src_row_end];
+                let dst_slice = &mut canvas[dst_row_start..dst_row_end];
+                for (s, d) in src_slice.chunks_exact(4).zip(dst_slice.chunks_exact_mut(4)) {
+                    if s[3] != 0 {
+                        d.copy_from_slice(s);
+                    }
+                }
             }
         }
 
@@ -316,6 +323,71 @@ fn decode_png(path: &Path) -> Result<FrameSet, String> {
     })
 }
 
+/// Decodes a static or animated WebP file.
+fn decode_webp(path: &Path) -> Result<FrameSet, String> {
+    let file = File::open(path).map_err(|e| format!("open {}: {e}", path.display()))?;
+    let reader = BufReader::new(file);
+    let decoder = WebPDecoder::new(reader).map_err(|e| format!("webp header: {e}"))?;
+
+    let (width, height) = decoder.dimensions();
+    if width == 0 || height == 0 {
+        return Err("webp has zero size".into());
+    }
+
+    if decoder.has_animation() {
+        let frames_iter = decoder.into_frames();
+        let collected = frames_iter
+            .collect_frames()
+            .map_err(|e| format!("decode webp animation: {e}"))?;
+
+        let mut frames = Vec::with_capacity(collected.len());
+        for frame in collected {
+            let (num, denom) = frame.delay().numer_denom_ms();
+            let delay_ms = if denom != 0 {
+                (num / denom).max(10)
+            } else {
+                100
+            };
+            let rgba_buf = frame.into_buffer().into_raw();
+            let bgra = rgba_to_premul_bgra(&rgba_buf);
+            frames.push(Frame {
+                width,
+                height,
+                delay_ms,
+                bgra,
+            });
+        }
+
+        if frames.is_empty() {
+            return Err("animated webp contains no frames".into());
+        }
+
+        Ok(FrameSet {
+            width,
+            height,
+            frames,
+            source: path.display().to_string(),
+        })
+    } else {
+        let img = image::DynamicImage::from_decoder(decoder)
+            .map_err(|e| format!("decode static webp: {e}"))?;
+        let rgba = img.into_rgba8().into_raw();
+        let bgra = rgba_to_premul_bgra(&rgba);
+
+        Ok(FrameSet {
+            width,
+            height,
+            frames: vec![Frame {
+                width,
+                height,
+                delay_ms: 100,
+                bgra,
+            }],
+            source: path.display().to_string(),
+        })
+    }
+}
+
 /// Converts the PNG crate output (grayscale / gray+alpha / RGB / RGBA at
 /// 8 bits per sample) into straight-alpha RGBA.
 fn png_to_rgba(
@@ -461,5 +533,34 @@ mod tests {
         // pixel (0,0) must be untouched, pixel (1,1) cleared
         assert_eq!(canvas[0], 255);
         assert_eq!(canvas[(1 * 4 + 1) * 4], 0);
+    }
+
+    #[test]
+    fn gif_subframe_transparency_preserves_canvas() {
+        let mut canvas = vec![100u8; 2 * 2 * 4];
+        let subframe = [
+            0u8, 0, 0, 0,      // transparent pixel (alpha == 0) -> must preserve canvas
+            255, 200, 150, 255 // opaque pixel (alpha == 255) -> must overwrite canvas
+        ];
+        let copy_cols = 2usize;
+        for (s, d) in subframe[..copy_cols * 4].chunks_exact(4).zip(canvas[..copy_cols * 4].chunks_exact_mut(4)) {
+            if s[3] != 0 {
+                d.copy_from_slice(s);
+            }
+        }
+        // Pixel 0 must remain 100
+        assert_eq!(canvas[0..4], [100, 100, 100, 100]);
+        // Pixel 1 must be overwritten
+        assert_eq!(canvas[4..8], [255, 200, 150, 255]);
+    }
+
+    #[test]
+    fn decode_file_dispatches_webp() {
+        // Must recognize webp extension and attempt to open it (yielding file open error, not unsupported type)
+        let res = decode_file(Path::new("non_existent_test_file.webp"));
+        assert!(res.is_err());
+        let err = res.err().unwrap();
+        assert!(!err.contains("unsupported media type"));
+        assert!(err.contains("open non_existent_test_file.webp"));
     }
 }

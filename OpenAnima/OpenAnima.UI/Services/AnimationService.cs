@@ -29,7 +29,7 @@ public class AnimationService
         double chromaTolerance = 0.15,
         bool chromaContiguous = true)
     {
-        await _supervisor.EnsureStartedAndConnectedAsync();
+        await _supervisor.EnsureStartedAndConnectedAsync().ConfigureAwait(false);
 
         var param = new JsonObject
         {
@@ -50,7 +50,7 @@ public class AnimationService
             ["chroma_contiguous"] = chromaContiguous
         };
 
-        var resp = await _supervisor.SendCommandAsync("overlay.play", param);
+        var resp = await _supervisor.SendCommandAsync("overlay.play", param).ConfigureAwait(false);
         if (resp != null && resp["ok"]?.GetValue<bool>() == true)
         {
             return resp["result"]?["overlay_id"]?.GetValue<long>();
@@ -62,13 +62,13 @@ public class AnimationService
     public async Task<bool> StopAsync(long overlayId)
     {
         var param = new JsonObject { ["overlay_id"] = overlayId };
-        var resp = await _supervisor.SendCommandAsync("overlay.stop", param);
+        var resp = await _supervisor.SendCommandAsync("overlay.stop", param).ConfigureAwait(false);
         return resp != null && resp["ok"]?.GetValue<bool>() == true;
     }
 
     public async Task<bool> StopAllAsync()
     {
-        var resp = await _supervisor.SendCommandAsync("overlay.stop_all");
+        var resp = await _supervisor.SendCommandAsync("overlay.stop_all").ConfigureAwait(false);
         return resp != null && resp["ok"]?.GetValue<bool>() == true;
     }
 
@@ -105,25 +105,25 @@ public class AnimationService
         if (chromaTolerance.HasValue) param["chroma_tolerance"] = chromaTolerance.Value;
         if (chromaContiguous.HasValue) param["chroma_contiguous"] = chromaContiguous.Value;
 
-        var resp = await _supervisor.SendCommandAsync("overlay.set", param);
+        var resp = await _supervisor.SendCommandAsync("overlay.set", param).ConfigureAwait(false);
         return resp != null && resp["ok"]?.GetValue<bool>() == true;
     }
 
     public async Task<bool> HideAllAsync()
     {
-        var resp = await _supervisor.SendCommandAsync("overlay.hide_all");
+        var resp = await _supervisor.SendCommandAsync("overlay.hide_all").ConfigureAwait(false);
         return resp != null && resp["ok"]?.GetValue<bool>() == true;
     }
 
     public async Task<bool> ShowAllAsync()
     {
-        var resp = await _supervisor.SendCommandAsync("overlay.show_all");
+        var resp = await _supervisor.SendCommandAsync("overlay.show_all").ConfigureAwait(false);
         return resp != null && resp["ok"]?.GetValue<bool>() == true;
     }
 
     public async Task<JsonArray?> ListOverlaysAsync()
     {
-        var resp = await _supervisor.SendCommandAsync("overlay.list");
+        var resp = await _supervisor.SendCommandAsync("overlay.list").ConfigureAwait(false);
         if (resp != null && resp["ok"]?.GetValue<bool>() == true)
         {
             return resp["result"]?["overlays"] as JsonArray;
@@ -133,13 +133,13 @@ public class AnimationService
 
     public async Task<JsonObject?> GetStatsAsync()
     {
-        var resp = await _supervisor.SendCommandAsync("core.stats");
+        var resp = await _supervisor.SendCommandAsync("core.stats").ConfigureAwait(false);
         return resp?["result"] as JsonObject;
     }
 
     public async Task<JsonObject?> TrimMemoryAsync()
     {
-        var resp = await _supervisor.SendCommandAsync("core.trim_memory");
+        var resp = await _supervisor.SendCommandAsync("core.trim_memory").ConfigureAwait(false);
         return resp?["result"] as JsonObject;
     }
 }

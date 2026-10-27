@@ -175,6 +175,7 @@ public partial class MainWindow : Window
             _config.Language = lang;
             LocalizationService.SetLanguage(lang);
             UpdateActiveBadgeText();
+            _ = _supervisor.SendCommandAsync("core.set_language", new System.Text.Json.Nodes.JsonObject { ["lang"] = lang });
             _ = RefreshCoreStatusAsync();
             QueueSaveConfig();
         }
@@ -210,6 +211,22 @@ public partial class MainWindow : Window
             _trayService.OnTrayRightClicked += ShowTrayContextMenu;
             _trayService.OnRequestShowWindow += ShowAndActivateWindow;
 
+            _supervisor.OnCoreExited += (exitCode) =>
+            {
+                Dispatcher.Invoke(() =>
+                {
+                    foreach (var anim in _allAnimations)
+                    {
+                        anim.IsPlaying = false;
+                        anim.OverlayId = null;
+                    }
+                    UpdateActiveBadgeText();
+                    TxtStatusBar.Text = LocalizationService.CurrentLanguage == "ru"
+                        ? $"Ядро оверлеев неожиданно завершилось (код: {exitCode}). Перезапустите ядро в Настройках."
+                        : $"Overlay core unexpectedly exited (code: {exitCode}). Restart core in Settings.";
+                });
+            };
+
             // Load saved configuration
             App.Log("OnLoaded: step 2 - LoadAsync config");
             _config = await _configService.LoadAsync();
@@ -220,6 +237,7 @@ public partial class MainWindow : Window
             _config.Language = lang;
             App.Log($"OnLoaded: step 3 - SetLanguage({lang})");
             LocalizationService.SetLanguage(lang);
+            _ = _supervisor.SendCommandAsync("core.set_language", new System.Text.Json.Nodes.JsonObject { ["lang"] = lang });
 
             App.Log("OnLoaded: step 4 - Select language in combo");
             _isUpdatingLanguageCombo = true;
@@ -396,7 +414,7 @@ public partial class MainWindow : Window
         [
             Path.GetFullPath(Path.Combine(baseDir, @"..\..\..\..\..\_legacy_reference\AnimaEngine\Models")),
             Path.GetFullPath(Path.Combine(baseDir, @"..\..\..\..\_legacy_reference\AnimaEngine\Models")),
-            @"C:\Users\fobakic\Documents\animka\_legacy_reference\AnimaEngine\Models"
+            Path.GetFullPath(Path.Combine(baseDir, @"_legacy_reference\AnimaEngine\Models"))
         ];
 
         foreach (var dir in searchDirs)
@@ -564,7 +582,7 @@ public partial class MainWindow : Window
     {
         if (sender is FrameworkElement { Tag: AnimationItem item })
         {
-            if (item.Physics && item.ClickThrough && sender is CheckBox { IsChecked: true } cb && cb.ToolTip?.ToString()?.Contains("по умолчанию") == true)
+            if (item.Physics && item.ClickThrough)
             {
                 item.ClickThrough = false;
             }
@@ -606,9 +624,14 @@ public partial class MainWindow : Window
     {
         if (sender is FrameworkElement { Tag: AnimationItem item } && item.IsPlaying && item.OverlayId.HasValue)
         {
-            if (!string.IsNullOrWhiteSpace(item.ChromaColor) && item.ChromaColor.Length >= 4)
+            string color = item.ChromaColor?.Trim() ?? "";
+            if (System.Text.RegularExpressions.Regex.IsMatch(color, "^#([0-9a-fA-F]{3}|[0-9a-fA-F]{6})$"))
             {
-                await _animationService.UpdateAsync(item.OverlayId.Value, chromaColor: item.ChromaColor);
+                if (color.Length == 4)
+                {
+                    color = $"#{color[1]}{color[1]}{color[2]}{color[2]}{color[3]}{color[3]}";
+                }
+                await _animationService.UpdateAsync(item.OverlayId.Value, chromaColor: color);
                 QueueSaveConfig();
             }
         }
@@ -732,7 +755,7 @@ public partial class MainWindow : Window
     {
         try
         {
-            System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo("https://github.com/rehan-remade/universal-modder")
+            System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo("https://github.com/fobakic/OpenAnima")
             {
                 UseShellExecute = true
             });
@@ -782,7 +805,63 @@ public partial class MainWindow : Window
     {
         try
         {
-            var list = await _animationService.ListOverlaysAsync();
+            var list = await _animationService.ListOverlaysAsync().ConfigureAwait(false);
+            if (list == null) return;
+
+            void ApplyUpdates()
+            {
+                foreach (var node in list)
+                {
+                    if (node is JsonObject obj)
+                    {
+                        long id = obj["overlay_id"]?.GetValue<long>() ?? 0;
+                        int x = obj["x"]?.GetValue<int>() ?? 0;
+                        int y = obj["y"]?.GetValue<int>() ?? 0;
+                        double? scaleVal = obj["scale"]?.GetValue<double>();
+                        bool? physVal = obj["physics"]?.GetValue<bool>();
+
+                        var item = _allAnimations.FirstOrDefault(a => a.OverlayId == id);
+                        if (item != null)
+                        {
+                            item.X = x;
+                            item.Y = y;
+                            if (scaleVal.HasValue)
+                            {
+                                item.Scale = Math.Round(scaleVal.Value * 100.0, 1);
+                            }
+                            if (physVal.HasValue)
+                            {
+                                item.Physics = physVal.Value;
+                            }
+                        }
+                    }
+                }
+            }
+
+            if (Dispatcher.CheckAccess())
+            {
+                ApplyUpdates();
+            }
+            else
+            {
+                Dispatcher.Invoke(ApplyUpdates);
+            }
+        }
+        catch (Exception ex)
+        {
+            App.Log($"[SyncOverlayPositionsAsync] Error: {ex.Message}");
+        }
+    }
+
+    private void SyncOverlayPositionsSync(int timeoutMs = 1000)
+    {
+        try
+        {
+            var listTask = Task.Run(async () => await _animationService.ListOverlaysAsync().ConfigureAwait(false));
+            if (!listTask.Wait(timeoutMs))
+                return;
+
+            var list = listTask.Result;
             if (list == null) return;
 
             foreach (var node in list)
@@ -814,7 +893,7 @@ public partial class MainWindow : Window
         }
         catch (Exception ex)
         {
-            App.Log($"[SyncOverlayPositionsAsync] Error: {ex.Message}");
+            App.Log($"[SyncOverlayPositionsSync] Error: {ex.Message}");
         }
     }
 
@@ -848,6 +927,43 @@ public partial class MainWindow : Window
         }).ToList();
 
         await _configService.SaveAsync(_config);
+    }
+
+    private void SaveConfigSync()
+    {
+        try
+        {
+            _config.MinimizeToTrayOnClose = ChkMinimizeToTray.IsChecked == true;
+            _config.StartMinimized = ChkStartMinimized.IsChecked == true;
+            _config.AutoStartWithWindows = ChkAutoStart.IsChecked == true;
+            _config.RestoreOverlaysOnStartup = ChkRestoreOverlays.IsChecked == true;
+            _config.AggressiveMemoryTrimming = ChkAggressiveMemory.IsChecked == true;
+
+            _config.Animations = _allAnimations.Select(a => new AnimationConfigItem
+            {
+                FilePath = a.FilePath,
+                X = a.X,
+                Y = a.Y,
+                Alpha = a.Alpha,
+                Scale = a.Scale,
+                Smooth = a.Smooth,
+                AlwaysOnTop = a.AlwaysOnTop,
+                ClickThrough = a.ClickThrough,
+                Physics = a.Physics,
+                Bouncy = a.Bouncy,
+                ChromaKey = a.ChromaKey,
+                ChromaColor = a.ChromaColor,
+                ChromaTolerance = a.ChromaTolerance,
+                ChromaContiguous = a.ChromaContiguous,
+                IsPlaying = a.IsPlaying
+            }).ToList();
+
+            _configService.SaveSync(_config);
+        }
+        catch (Exception ex)
+        {
+            App.Log($"[SaveConfigSync] Error: {ex.Message}");
+        }
     }
 
     private async void OnConfigSettingChanged(object sender, RoutedEventArgs e)
@@ -929,7 +1045,7 @@ public partial class MainWindow : Window
         Close();
     }
 
-    private async void OnClosing(object? sender, System.ComponentModel.CancelEventArgs e)
+    private void OnClosing(object? sender, System.ComponentModel.CancelEventArgs e)
     {
         LocalizationService.LanguageChanged -= OnLanguageChanged;
 
@@ -937,7 +1053,7 @@ public partial class MainWindow : Window
         {
             e.Cancel = true;
             Hide();
-            await SaveConfigAsync();
+            _ = SaveConfigAsync();
             if (_config.AggressiveMemoryTrimming)
             {
                 MemoryOptimizer.TrimWorkingSet();
@@ -945,7 +1061,12 @@ public partial class MainWindow : Window
             return;
         }
 
-        await SaveConfigAsync();
+        _saveDebounceTimer.Stop();
+        _sliderThrottleTimer.Stop();
+        OnSliderThrottleTick(null, EventArgs.Empty);
+
+        SyncOverlayPositionsSync(1000);
+        SaveConfigSync();
         _trayService.Dispose();
         _supervisor.Dispose();
     }

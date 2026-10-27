@@ -28,6 +28,7 @@ serde_json = "1"
 gif = "0.13"
 png = "0.17"
 zip = { version = "2", default-features = false, features = ["deflate"], optional = true }
+image = { version = "0.25.10", default-features = false, features = ["webp"] }
 
 [profile.release]
 opt-level = 3

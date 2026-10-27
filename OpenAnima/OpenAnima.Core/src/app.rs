@@ -97,6 +97,13 @@ impl Core {
                 Response::ok(req.id, json!({ "quitting": true }))
             }
 
+            "core.set_language" => {
+                if let Some(lang) = params.get("lang").and_then(Value::as_str) {
+                    crate::win::overlay::set_core_language(lang);
+                }
+                Response::ok(req.id, json!({ "ok": true }))
+            }
+
             "media.info" => {
                 let path = params.get("path").and_then(Value::as_str).unwrap_or_default();
                 if path.is_empty() {
@@ -482,6 +489,11 @@ fn parse_hex_color(s: Option<&str>) -> Option<[u8; 3]> {
         let g = u8::from_str_radix(&s[2..4], 16).ok()?;
         let b = u8::from_str_radix(&s[4..6], 16).ok()?;
         Some([r, g, b])
+    } else if s.len() == 3 {
+        let r = u8::from_str_radix(&s[0..1], 16).ok()?;
+        let g = u8::from_str_radix(&s[1..2], 16).ok()?;
+        let b = u8::from_str_radix(&s[2..3], 16).ok()?;
+        Some([r * 17, g * 17, b * 17])
     } else if s.contains(',') {
         let parts: Vec<&str> = s.split(',').map(|p| p.trim()).collect();
         if parts.len() == 3 {
