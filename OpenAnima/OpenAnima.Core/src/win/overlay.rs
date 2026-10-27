@@ -32,7 +32,7 @@ use windows::Win32::UI::WindowsAndMessaging::{
     SWP_NOREDRAW,
     ULW_ALPHA, WINDOW_EX_STYLE, WNDCLASS_STYLES, WM_DESTROY, WM_NCHITTEST, WM_MOVE,
     WM_ENTERSIZEMOVE, WM_EXITSIZEMOVE, WM_MOUSEWHEEL, LoadCursorW, IDC_ARROW, WNDCLASSW, WS_EX_LAYERED, WS_EX_TOPMOST,
-    WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW, WS_EX_TRANSPARENT, WS_POPUP, GWLP_USERDATA, GWL_EXSTYLE,
+    WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW, WS_EX_TRANSPARENT, WS_POPUP, WS_VISIBLE, GWLP_USERDATA, GWL_EXSTYLE,
     AppendMenuW, CreatePopupMenu, DestroyMenu, FindWindowW, GetCursorPos, PostMessageW,
     RegisterWindowMessageW, SetForegroundWindow, ShowWindow, TrackPopupMenu, HMENU, MENU_ITEM_FLAGS,
     MF_CHECKED, MF_DISABLED, MF_GRAYED, MF_POPUP, MF_SEPARATOR, MF_STRING, MF_UNCHECKED,
@@ -999,7 +999,7 @@ impl OverlayManager {
                 ex_style,
                 PCWSTR(class_name.as_ptr()),
                 PCWSTR(class_name.as_ptr()),
-                WS_POPUP,
+                WS_POPUP | WS_VISIBLE,
                 x,
                 y,
                 width,
@@ -1097,6 +1097,7 @@ impl OverlayManager {
         if let Some(overlay) = self.overlays.get_mut(&id) {
             overlay.next_due = std::time::Instant::now();
             overlay.present();
+            overlay.set_visible(true);
             overlay.apply_topmost();
             if overlay.physics.enabled {
                 overlay.update_timer_speed();
