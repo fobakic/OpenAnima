@@ -1,0 +1,130 @@
+<Window x:Class="OpenAnima.UI.Views.Mp4ConverterDialog"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:ui="http://schemas.lepo.co/wpfui/2022/xaml"
+        Title="{DynamicResource Convert_Title}"
+        Width="540" Height="610"
+        WindowStartupLocation="CenterOwner"
+        ResizeMode="NoResize"
+        ShowInTaskbar="False"
+        Background="{DynamicResource ApplicationBackgroundBrush}">
+
+    <Grid Margin="20">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="*" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+        </Grid.RowDefinitions>
+
+        <!-- Header -->
+        <StackPanel Grid.Row="0" Margin="0,0,0,16">
+            <ui:TextBlock Text="{DynamicResource Convert_Title}" FontSize="18" FontWeight="SemiBold" Margin="0,0,0,4" />
+            <ui:TextBlock Text="Hardware-accelerated WMF decoding &amp; APNG compression with zero external dependencies." 
+                          FontSize="12" Foreground="{DynamicResource TextFillColorSecondaryBrush}" TextWrapping="Wrap" />
+        </StackPanel>
+
+        <!-- Main Settings in ScrollViewer -->
+        <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto">
+            <StackPanel Margin="0,0,4,0">
+                <!-- Source File Card -->
+                <ui:Card Margin="0,0,0,10" Padding="12">
+                    <StackPanel>
+                        <ui:TextBlock Text="{DynamicResource Convert_InputFile}" FontWeight="SemiBold" Margin="0,0,0,6" />
+                        <Grid>
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="Auto" />
+                            </Grid.ColumnDefinitions>
+                            <TextBox x:Name="TxtInputPath" Margin="0,0,8,0" TextChanged="TxtInputPath_TextChanged" />
+                            <ui:Button Grid.Column="1" Content="{DynamicResource Convert_Browse}" Click="BtnBrowseInput_Click" />
+                        </Grid>
+
+                        <ui:TextBlock Text="{DynamicResource Convert_OutputFile}" FontWeight="SemiBold" Margin="0,10,0,6" />
+                        <Grid>
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="Auto" />
+                            </Grid.ColumnDefinitions>
+                            <TextBox x:Name="TxtOutputPath" Margin="0,0,8,0" />
+                            <ui:Button Grid.Column="1" Content="{DynamicResource Convert_Browse}" Click="BtnBrowseOutput_Click" />
+                        </Grid>
+                    </StackPanel>
+                </ui:Card>
+
+                <!-- Video Parameters Card -->
+                <ui:Card Margin="0,0,0,10" Padding="12">
+                    <StackPanel>
+                        <!-- Target FPS -->
+                        <Grid Margin="0,0,0,10">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="Auto" />
+                            </Grid.ColumnDefinitions>
+                            <ui:TextBlock Text="{DynamicResource Convert_Fps}" FontWeight="SemiBold" />
+                            <ui:TextBlock Grid.Column="1" x:Name="TxtFpsValue" Text="20 FPS" FontWeight="SemiBold" Foreground="{DynamicResource AccentTextFillColorPrimaryBrush}" />
+                        </Grid>
+                        <Slider x:Name="SliderFps" Minimum="10" Maximum="30" Value="20" TickFrequency="5" IsSnapToTickEnabled="True" ValueChanged="SliderFps_ValueChanged" Margin="0,0,0,12" />
+
+                        <!-- Max Size -->
+                        <Grid Margin="0,0,0,6">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="160" />
+                            </Grid.ColumnDefinitions>
+                            <ui:TextBlock Text="{DynamicResource Convert_MaxSize}" FontWeight="SemiBold" VerticalAlignment="Center" />
+                            <ComboBox x:Name="CmbMaxSize" Grid.Column="1" SelectedIndex="1">
+                                <ComboBoxItem Tag="256" Content="256 px" />
+                                <ComboBoxItem Tag="384" Content="384 px (Standard)" />
+                                <ComboBoxItem Tag="512" Content="512 px" />
+                                <ComboBoxItem Tag="0" Content="Original" />
+                            </ComboBox>
+                        </Grid>
+                    </StackPanel>
+                </ui:Card>
+
+                <!-- Chroma Key (Background Removal) Card -->
+                <ui:Card Margin="0,0,0,10" Padding="12">
+                    <StackPanel>
+                        <CheckBox x:Name="ChkChromaKey" Content="{DynamicResource Convert_ChromaKey}" FontWeight="SemiBold" Margin="0,0,0,8" Checked="ChkChromaKey_Changed" Unchecked="ChkChromaKey_Changed" />
+                        
+                        <StackPanel x:Name="PnlChromaOptions" Visibility="Collapsed" Margin="8,0,0,0">
+                            <Grid Margin="0,0,0,8">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*" />
+                                    <ColumnDefinition Width="120" />
+                                </Grid.ColumnDefinitions>
+                                <ui:TextBlock Text="{DynamicResource Convert_ChromaColor}" VerticalAlignment="Center" />
+                                <TextBox x:Name="TxtChromaColor" Grid.Column="1" Text="#FFFFFF" HorizontalContentAlignment="Center" />
+                            </Grid>
+
+                            <CheckBox x:Name="ChkChromaContiguous" Content="{DynamicResource Convert_ChromaContiguous}" IsChecked="True" Margin="0,0,0,8" />
+
+                            <Grid Margin="0,0,0,4">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*" />
+                                    <ColumnDefinition Width="Auto" />
+                                </Grid.ColumnDefinitions>
+                                <ui:TextBlock Text="{DynamicResource Convert_ChromaTolerance}" />
+                                <ui:TextBlock Grid.Column="1" x:Name="TxtToleranceValue" Text="15%" />
+                            </Grid>
+                            <Slider x:Name="SliderTolerance" Minimum="5" Maximum="40" Value="15" ValueChanged="SliderTolerance_ValueChanged" />
+                        </StackPanel>
+                    </StackPanel>
+                </ui:Card>
+            </StackPanel>
+        </ScrollViewer>
+
+        <!-- Progress and Status Section -->
+        <StackPanel Grid.Row="2" Margin="0,10,0,12">
+            <ProgressBar x:Name="PrgConversion" Minimum="0" Maximum="100" Value="0" Height="8" Margin="0,0,0,6" />
+            <ui:TextBlock x:Name="TxtStatus" Text="Ready" Foreground="{DynamicResource TextFillColorSecondaryBrush}" TextWrapping="Wrap" />
+        </StackPanel>
+
+        <!-- Footer Buttons -->
+        <StackPanel Grid.Row="3" Orientation="Horizontal" HorizontalAlignment="Right">
+            <ui:Button x:Name="BtnStart" Content="{DynamicResource Convert_BtnStart}" Appearance="Primary" Click="BtnStart_Click" Margin="0,0,10,0" Padding="16,6" />
+            <ui:Button x:Name="BtnCancel" Content="{DynamicResource Convert_BtnCancel}" Appearance="Secondary" Click="BtnCancel_Click" Padding="16,6" />
+        </StackPanel>
+    </Grid>
+</Window>

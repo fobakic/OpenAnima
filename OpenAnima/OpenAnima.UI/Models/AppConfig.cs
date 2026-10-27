@@ -11,6 +11,10 @@ public class AppConfig
     public bool RestoreOverlaysOnStartup { get; set; } = true;
     public bool AggressiveMemoryTrimming { get; set; } = true;
 
+    public string ActiveProfileId { get; set; } = "default";
+    public bool GlobalHotkeysEnabled { get; set; } = true;
+    public List<ProfileModel> Profiles { get; set; } = [];
+
     public List<AnimationConfigItem> Animations { get; set; } = [];
 }
 

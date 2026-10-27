@@ -184,10 +184,9 @@ fn decode_gif(path: &Path) -> Result<FrameSet, String> {
     })
 }
 
-/// Decodes a PNG or APNG.
-fn decode_png(path: &Path) -> Result<FrameSet, String> {
-    let file = File::open(path).map_err(|e| format!("open {}: {e}", path.display()))?;
-    let mut decoder = png::Decoder::new(BufReader::new(file));
+/// Decodes a PNG or APNG from a reader.
+pub fn decode_png_from_reader<R: std::io::Read>(r: R, source: String) -> Result<FrameSet, String> {
+    let mut decoder = png::Decoder::new(r);
     decoder.set_transformations(
         png::Transformations::EXPAND
             | png::Transformations::STRIP_16
@@ -319,8 +318,14 @@ fn decode_png(path: &Path) -> Result<FrameSet, String> {
         width,
         height,
         frames,
-        source: path.display().to_string(),
+        source,
     })
+}
+
+/// Decodes a PNG or APNG from a file path.
+fn decode_png(path: &Path) -> Result<FrameSet, String> {
+    let file = File::open(path).map_err(|e| format!("open {}: {e}", path.display()))?;
+    decode_png_from_reader(BufReader::new(file), path.display().to_string())
 }
 
 /// Decodes a static or animated WebP file.
@@ -555,8 +560,64 @@ mod tests {
     }
 
     #[test]
+    fn spike_apng_subframe_roundtrip() {
+        let mut buf = Vec::new();
+        {
+            let mut encoder = png::Encoder::new(&mut buf, 10, 10);
+            encoder.set_color(png::ColorType::Rgba);
+            encoder.set_depth(png::BitDepth::Eight);
+            encoder.set_animated(3, 0).unwrap();
+            let mut writer = encoder.write_header().unwrap();
+
+            // Frame 0: full canvas 10x10 all black (0, 0, 0, 255)
+            writer.set_frame_delay(1, 20).unwrap();
+            let frame0 = vec![0u8, 0, 0, 255].repeat(10 * 10);
+            writer.write_image_data(&frame0).unwrap();
+
+            // Frame 1: sub-frame at (2, 2), size 4x4, all red (255, 0, 0, 255)
+            writer.set_frame_dimension(4, 4).unwrap();
+            writer.set_frame_position(2, 2).unwrap();
+            writer.set_blend_op(png::BlendOp::Source).unwrap();
+            writer.set_dispose_op(png::DisposeOp::None).unwrap();
+            writer.set_frame_delay(1, 20).unwrap();
+            let frame1 = vec![255u8, 0, 0, 255].repeat(4 * 4);
+            writer.write_image_data(&frame1).unwrap();
+
+            // Frame 2: sub-frame at (5, 5), size 3x3, all blue (0, 0, 255, 255)
+            writer.set_frame_dimension(3, 3).unwrap();
+            writer.set_frame_position(5, 5).unwrap();
+            writer.set_blend_op(png::BlendOp::Source).unwrap();
+            writer.set_dispose_op(png::DisposeOp::None).unwrap();
+            writer.set_frame_delay(1, 20).unwrap();
+            let frame2 = vec![0u8, 0, 255, 255].repeat(3 * 3);
+            writer.write_image_data(&frame2).unwrap();
+        }
+
+        // Now decode with our own decoder
+        let decoded = decode_png_from_reader(std::io::Cursor::new(&buf), "memory.apng".into()).unwrap();
+        assert_eq!(decoded.width, 10);
+        assert_eq!(decoded.height, 10);
+        assert_eq!(decoded.frames.len(), 3);
+
+        // Frame 0: (0,0) is black (BGRA: 0, 0, 0, 255)
+        let f0 = &decoded.frames[0];
+        assert_eq!(f0.bgra[0..4], [0, 0, 0, 255]);
+
+        // Frame 1: (0,0) is black, but (2,2) is red (BGRA: 0, 0, 255, 255)
+        let f1 = &decoded.frames[1];
+        let idx_2_2 = ((2 * 10 + 2) * 4) as usize;
+        assert_eq!(f1.bgra[0..4], [0, 0, 0, 255]);
+        assert_eq!(f1.bgra[idx_2_2..idx_2_2 + 4], [0, 0, 255, 255]);
+
+        // Frame 2: (2,2) is still red (DisposeOp::None preserved), and (5,5) is blue (BGRA: 255, 0, 0, 255)
+        let f2 = &decoded.frames[2];
+        let idx_5_5 = ((5 * 10 + 5) * 4) as usize;
+        assert_eq!(f2.bgra[idx_2_2..idx_2_2 + 4], [0, 0, 255, 255]);
+        assert_eq!(f2.bgra[idx_5_5..idx_5_5 + 4], [255, 0, 0, 255]);
+    }
+
+    #[test]
     fn decode_file_dispatches_webp() {
-        // Must recognize webp extension and attempt to open it (yielding file open error, not unsupported type)
         let res = decode_file(Path::new("non_existent_test_file.webp"));
         assert!(res.is_err());
         let err = res.err().unwrap();

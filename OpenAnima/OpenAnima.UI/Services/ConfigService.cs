@@ -41,6 +41,7 @@ public class ConfigService
                 if (config != null)
                 {
                     config.AutoStartWithWindows = IsAutoStartEnabled();
+                    EnsureDefaultProfiles(config);
                     return config;
                 }
             }
@@ -52,6 +53,7 @@ public class ConfigService
 
         var defaultCfg = new AppConfig();
         defaultCfg.AutoStartWithWindows = IsAutoStartEnabled();
+        EnsureDefaultProfiles(defaultCfg);
         return defaultCfg;
     }
 
@@ -113,6 +115,88 @@ public class ConfigService
         finally
         {
             SaveLock.Release();
+        }
+    }
+
+    public static void EnsureDefaultProfiles(AppConfig config)
+    {
+        if (config.Profiles != null && config.Profiles.Count > 0)
+            return;
+
+        config.Profiles =
+        [
+            new ProfileModel
+            {
+                Id = "default",
+                Name = "Default",
+                Icon = "Sparkle24",
+                IsBuiltIn = true,
+                Hotkey = new HotkeyConfig
+                {
+                    Modifiers = 0x0002 | 0x0004, // MOD_CONTROL | MOD_SHIFT
+                    VirtualKey = 0x44,           // 'D'
+                    DisplayText = "Ctrl+Shift+D",
+                    IsEnabled = true
+                }
+            },
+            new ProfileModel
+            {
+                Id = "gaming",
+                Name = "Gaming",
+                Icon = "Games24",
+                IsBuiltIn = true,
+                ForceClickThrough = true,
+                DisablePhysics = true,
+                TargetAlpha = 0.35,
+                Hotkey = new HotkeyConfig
+                {
+                    Modifiers = 0x0002 | 0x0004, // MOD_CONTROL | MOD_SHIFT
+                    VirtualKey = 0x47,           // 'G'
+                    DisplayText = "Ctrl+Shift+G",
+                    IsEnabled = true
+                }
+            },
+            new ProfileModel
+            {
+                Id = "work",
+                Name = "Work",
+                Icon = "Briefcase24",
+                IsBuiltIn = true,
+                ForceClickThrough = true,
+                DisablePhysics = true,
+                TargetScale = 12.0,
+                TargetAlpha = 0.60,
+                Hotkey = new HotkeyConfig
+                {
+                    Modifiers = 0x0002 | 0x0004, // MOD_CONTROL | MOD_SHIFT
+                    VirtualKey = 0x57,           // 'W'
+                    DisplayText = "Ctrl+Shift+W",
+                    IsEnabled = true
+                }
+            },
+            new ProfileModel
+            {
+                Id = "chill",
+                Name = "Chill",
+                Icon = "DrinkCoffee24",
+                IsBuiltIn = true,
+                ForceClickThrough = false,
+                DisablePhysics = false,
+                TargetAlpha = 1.0,
+                TargetScale = 20.0,
+                Hotkey = new HotkeyConfig
+                {
+                    Modifiers = 0x0002 | 0x0004, // MOD_CONTROL | MOD_SHIFT
+                    VirtualKey = 0x43,           // 'C'
+                    DisplayText = "Ctrl+Shift+C",
+                    IsEnabled = true
+                }
+            }
+        ];
+
+        if (string.IsNullOrEmpty(config.ActiveProfileId))
+        {
+            config.ActiveProfileId = "default";
         }
     }
 

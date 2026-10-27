@@ -57,6 +57,9 @@ public partial class MainWindow : Window
     private bool _isSendingSliderUpdate = false;
 
     private AppConfig _config = new();
+    private readonly HotkeyService _hotkeyService = new();
+    private ProfileService? _profileService;
+    private bool _isUpdatingProfileCombo = false;
     private string _filter = string.Empty;
     private bool _isExiting = false;
     private bool _allOverlaysHidden = false;
@@ -267,6 +270,23 @@ public partial class MainWindow : Window
             ChkAutoStart.IsChecked = _config.AutoStartWithWindows;
             ChkRestoreOverlays.IsChecked = _config.RestoreOverlaysOnStartup;
             ChkAggressiveMemory.IsChecked = _config.AggressiveMemoryTrimming;
+            ChkGlobalHotkeys.IsChecked = _config.GlobalHotkeysEnabled;
+
+            // Initialize profiles and hotkeys
+            _profileService = new ProfileService(_animationService);
+            _profileService.Initialize(_config);
+            UpdateProfileSelectorUi(_config.ActiveProfileId);
+
+            _hotkeyService.Initialize(this);
+            _hotkeyService.OnProfileHotkeyPressed += async (profileId) =>
+            {
+                await Dispatcher.InvokeAsync(async () =>
+                {
+                    await SwitchProfileInternalAsync(profileId);
+                });
+            };
+            _hotkeyService.RegisterProfileHotkeys(_config.Profiles, _config.GlobalHotkeysEnabled);
+            UpdateHotkeyConflictWarning();
 
             App.Log("OnLoaded: step 6 - RefreshCoreStatusAsync");
             await RefreshCoreStatusAsync();
@@ -691,6 +711,13 @@ public partial class MainWindow : Window
         {
             if (e.Data.GetData(DataFormats.FileDrop) is string[] files && files.Length > 0)
             {
+                var mp4File = files.FirstOrDefault(f => Path.GetExtension(f).Equals(".mp4", StringComparison.OrdinalIgnoreCase));
+                if (mp4File != null)
+                {
+                    OpenMp4Converter(mp4File);
+                    return;
+                }
+
                 var supported = new[] { ".gif", ".png", ".apng", ".webp" };
                 int added = 0;
                 foreach (var file in files)
@@ -717,6 +744,25 @@ public partial class MainWindow : Window
                     TxtStatusBar.Text = LocalizationService.Format("Status_FilesAdded", added);
                 }
             }
+        }
+    }
+
+    private void BtnOpenMp4Converter_Click(object sender, RoutedEventArgs e)
+    {
+        OpenMp4Converter();
+    }
+
+    private void OpenMp4Converter(string? initialPath = null)
+    {
+        var dlg = new OpenAnima.UI.Views.Mp4ConverterDialog(_animationService, _supervisor, initialPath)
+        {
+            Owner = this
+        };
+        if (dlg.ShowDialog() == true && !string.IsNullOrEmpty(dlg.ConvertedApngPath) && File.Exists(dlg.ConvertedApngPath))
+        {
+            AddAnimationFile(dlg.ConvertedApngPath);
+            _ = SaveConfigAsync();
+            TxtStatusBar.Text = LocalizationService.Format("Convert_CompletedFormat", Path.GetFileName(dlg.ConvertedApngPath));
         }
     }
 
@@ -906,6 +952,8 @@ public partial class MainWindow : Window
         _config.AutoStartWithWindows = ChkAutoStart.IsChecked == true;
         _config.RestoreOverlaysOnStartup = ChkRestoreOverlays.IsChecked == true;
         _config.AggressiveMemoryTrimming = ChkAggressiveMemory.IsChecked == true;
+        _config.GlobalHotkeysEnabled = ChkGlobalHotkeys.IsChecked == true;
+        _config.ActiveProfileId = _profileService?.CurrentProfile?.Id ?? _config.ActiveProfileId;
 
         _config.Animations = _allAnimations.Select(a => new AnimationConfigItem
         {
@@ -938,6 +986,8 @@ public partial class MainWindow : Window
             _config.AutoStartWithWindows = ChkAutoStart.IsChecked == true;
             _config.RestoreOverlaysOnStartup = ChkRestoreOverlays.IsChecked == true;
             _config.AggressiveMemoryTrimming = ChkAggressiveMemory.IsChecked == true;
+            _config.GlobalHotkeysEnabled = ChkGlobalHotkeys.IsChecked == true;
+            _config.ActiveProfileId = _profileService?.CurrentProfile?.Id ?? _config.ActiveProfileId;
 
             _config.Animations = _allAnimations.Select(a => new AnimationConfigItem
             {
@@ -976,6 +1026,88 @@ public partial class MainWindow : Window
         await SaveConfigAsync();
         TxtSaveStatus.Text = LocalizationService.Format("Status_Saved", DateTime.Now.ToString("HH:mm:ss"));
     }
+
+    #region Profiles & Hotkeys
+    private async Task SwitchProfileInternalAsync(string profileId)
+    {
+        if (_profileService == null) return;
+        bool switched = await _profileService.SwitchProfileAsync(profileId, _config, _allAnimations);
+        if (switched)
+        {
+            UpdateProfileSelectorUi(profileId);
+            QueueSaveConfig();
+            TxtStatusBar.Text = LocalizationService.CurrentLanguage == "ru"
+                ? $"Активен профиль: {_profileService.CurrentProfile?.Name}"
+                : $"Active profile: {_profileService.CurrentProfile?.Name}";
+        }
+    }
+
+    private void UpdateProfileSelectorUi(string profileId)
+    {
+        _isUpdatingProfileCombo = true;
+        try
+        {
+            foreach (ComboBoxItem item in CmbActiveProfile.Items)
+            {
+                if (item.Tag?.ToString()?.Equals(profileId, StringComparison.OrdinalIgnoreCase) == true)
+                {
+                    CmbActiveProfile.SelectedItem = item;
+                    break;
+                }
+            }
+        }
+        finally
+        {
+            _isUpdatingProfileCombo = false;
+        }
+
+        MenuProfileDefault.IsChecked = profileId.Equals("default", StringComparison.OrdinalIgnoreCase);
+        MenuProfileGaming.IsChecked = profileId.Equals("gaming", StringComparison.OrdinalIgnoreCase);
+        MenuProfileWork.IsChecked = profileId.Equals("work", StringComparison.OrdinalIgnoreCase);
+        MenuProfileChill.IsChecked = profileId.Equals("chill", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private async void CmbActiveProfile_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (_isUpdatingProfileCombo) return;
+        if (CmbActiveProfile.SelectedItem is ComboBoxItem item && item.Tag is string profileId)
+        {
+            await SwitchProfileInternalAsync(profileId);
+        }
+    }
+
+    private async void ProfileMenuItem_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is System.Windows.Controls.MenuItem mi && mi.Tag is string profileId)
+        {
+            await SwitchProfileInternalAsync(profileId);
+        }
+    }
+
+    private void ChkGlobalHotkeys_Click(object sender, RoutedEventArgs e)
+    {
+        bool isEnabled = ChkGlobalHotkeys.IsChecked == true;
+        _config.GlobalHotkeysEnabled = isEnabled;
+        _hotkeyService.RegisterProfileHotkeys(_config.Profiles, isEnabled);
+        UpdateHotkeyConflictWarning();
+        QueueSaveConfig();
+    }
+
+    private void UpdateHotkeyConflictWarning()
+    {
+        var conflicting = _config.Profiles.Where(p => p.Hotkey?.HasConflict == true).ToList();
+        if (conflicting.Count > 0)
+        {
+            string hotkeyNames = string.Join(", ", conflicting.Select(p => p.Hotkey?.DisplayText));
+            TxtHotkeyConflict.Text = LocalizationService.Format("Settings_Hotkeys_Conflict", hotkeyNames);
+            TxtHotkeyConflict.Visibility = Visibility.Visible;
+        }
+        else
+        {
+            TxtHotkeyConflict.Visibility = Visibility.Collapsed;
+        }
+    }
+    #endregion
     #endregion
 
     #region System Tray & Window Lifecycle
@@ -1067,6 +1199,7 @@ public partial class MainWindow : Window
 
         SyncOverlayPositionsSync(1000);
         SaveConfigSync();
+        _hotkeyService.Dispose();
         _trayService.Dispose();
         _supervisor.Dispose();
     }

@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.IO;
 using System.IO.Pipes;
@@ -26,6 +27,9 @@ public sealed class CoreSupervisor : IDisposable
     private IntPtr _jobHandle = IntPtr.Zero;
     private NamedPipeClientStream? _pipeStream;
     private readonly SemaphoreSlim _lock = new(1, 1);
+    private readonly SemaphoreSlim _writeLock = new(1, 1);
+    private readonly ConcurrentDictionary<long, TaskCompletionSource<JsonObject?>> _pendingRequests = new();
+    private CancellationTokenSource? _readCts;
     private long _nextId = 1;
     private bool _isRestarting;
     private bool _disposed;
@@ -113,80 +117,139 @@ public sealed class CoreSupervisor : IDisposable
 
             await pipe.ConnectAsync(timeoutCts.Token).ConfigureAwait(false);
             _pipeStream = pipe;
+            StartReadLoop();
             return true;
         }
         catch
         {
+            _readCts?.Cancel();
             _pipeStream?.Dispose();
             _pipeStream = null;
             return false;
         }
     }
 
+    private void StartReadLoop()
+    {
+        _readCts?.Cancel();
+        _readCts?.Dispose();
+        _readCts = new CancellationTokenSource();
+        var token = _readCts.Token;
+        _ = Task.Run(async () =>
+        {
+            var pipe = _pipeStream;
+            if (pipe == null) return;
+
+            byte[] lenBuf = new byte[4];
+            while (!token.IsCancellationRequested && pipe.IsConnected)
+            {
+                try
+                {
+                    await pipe.ReadExactlyAsync(lenBuf, 0, 4, token).ConfigureAwait(false);
+                    uint length = BitConverter.ToUInt32(lenBuf, 0);
+                    if (length == 0 || length > 16 * 1024 * 1024)
+                        break;
+
+                    byte[] respBytes = new byte[length];
+                    await pipe.ReadExactlyAsync(respBytes, 0, (int)length, token).ConfigureAwait(false);
+                    var node = JsonNode.Parse(respBytes) as JsonObject;
+                    if (node == null) continue;
+
+                    if (node.ContainsKey("event") && !node.ContainsKey("id"))
+                    {
+                        string eventName = node["event"]?.ToString() ?? string.Empty;
+                        var eventData = node["data"] as JsonObject;
+                        try
+                        {
+                            OnBroadcastEventReceived?.Invoke(eventName, eventData);
+                        }
+                        catch (Exception ex)
+                        {
+                            App.Log($"[CoreSupervisor] Broadcast event error: {ex.Message}");
+                        }
+                    }
+                    else if (node.ContainsKey("id"))
+                    {
+                        long id = node["id"]?.GetValue<long>() ?? 0;
+                        if (_pendingRequests.TryRemove(id, out var tcs))
+                        {
+                            tcs.TrySetResult(node);
+                        }
+                    }
+                }
+                catch
+                {
+                    break;
+                }
+            }
+
+            foreach (var kvp in _pendingRequests)
+            {
+                if (_pendingRequests.TryRemove(kvp.Key, out var pending))
+                {
+                    pending.TrySetResult(null);
+                }
+            }
+        }, token);
+    }
+
     public async Task<JsonObject?> SendCommandAsync(string cmd, JsonObject? parameters = null, CancellationToken ct = default)
     {
-        await _lock.WaitAsync(ct).ConfigureAwait(false);
+        if (_pipeStream == null || !_pipeStream.IsConnected)
+            return null;
+
+        long id = Interlocked.Increment(ref _nextId);
+        var reqObj = new JsonObject
+        {
+            ["id"] = id,
+            ["cmd"] = cmd,
+            ["params"] = parameters ?? new JsonObject()
+        };
+
+        var tcs = new TaskCompletionSource<JsonObject?>(TaskCreationOptions.RunContinuationsAsynchronously);
+        _pendingRequests[id] = tcs;
+
+        byte[] jsonBytes = System.Text.Encoding.UTF8.GetBytes(reqObj.ToJsonString());
+        byte[] lenBytes = BitConverter.GetBytes((uint)jsonBytes.Length);
+
+        await _writeLock.WaitAsync(ct).ConfigureAwait(false);
         try
         {
             if (_pipeStream == null || !_pipeStream.IsConnected)
-                return null;
-
-            long id = Interlocked.Increment(ref _nextId);
-            var reqObj = new JsonObject
             {
-                ["id"] = id,
-                ["cmd"] = cmd,
-                ["params"] = parameters ?? new JsonObject()
-            };
-
-            byte[] jsonBytes = System.Text.Encoding.UTF8.GetBytes(reqObj.ToJsonString());
-            byte[] lenBytes = BitConverter.GetBytes((uint)jsonBytes.Length);
+                _pendingRequests.TryRemove(id, out _);
+                return null;
+            }
             await _pipeStream.WriteAsync(lenBytes, 0, 4, ct).ConfigureAwait(false);
             await _pipeStream.WriteAsync(jsonBytes, 0, jsonBytes.Length, ct).ConfigureAwait(false);
             await _pipeStream.FlushAsync(ct).ConfigureAwait(false);
-
-            byte[] respLenBuf = new byte[4];
-            while (true)
-            {
-                await _pipeStream.ReadExactlyAsync(respLenBuf, 0, 4, ct).ConfigureAwait(false);
-                uint length = BitConverter.ToUInt32(respLenBuf, 0);
-                if (length == 0 || length > 16 * 1024 * 1024)
-                    return null;
-
-                byte[] respBytes = new byte[length];
-                await _pipeStream.ReadExactlyAsync(respBytes, 0, (int)length, ct).ConfigureAwait(false);
-                var node = JsonNode.Parse(respBytes) as JsonObject;
-                if (node == null)
-                    continue;
-
-                // Check if this is an unsolicited broadcast event
-                if (node.ContainsKey("event") && !node.ContainsKey("id"))
-                {
-                    string eventName = node["event"]?.ToString() ?? string.Empty;
-                    var eventData = node["data"] as JsonObject;
-                    try
-                    {
-                        OnBroadcastEventReceived?.Invoke(eventName, eventData);
-                    }
-                    catch (Exception ex)
-                    {
-                        Debug.WriteLine($"[CoreSupervisor] Broadcast event error: {ex.Message}");
-                    }
-                    continue;
-                }
-
-                // Response frame
-                return node;
-            }
         }
         catch (Exception ex)
         {
-            Debug.WriteLine($"[CoreSupervisor] IPC error on '{cmd}': {ex.Message}");
+            App.Log($"[CoreSupervisor] IPC write error on '{cmd}': {ex.Message}");
+            _pendingRequests.TryRemove(id, out _);
             return null;
         }
         finally
         {
-            _lock.Release();
+            _writeLock.Release();
+        }
+
+        using var reg = ct.Register(() =>
+        {
+            if (_pendingRequests.TryRemove(id, out var pending))
+            {
+                pending.TrySetCanceled(ct);
+            }
+        });
+
+        try
+        {
+            return await tcs.Task.ConfigureAwait(false);
+        }
+        catch
+        {
+            return null;
         }
     }
 
@@ -337,7 +400,10 @@ public sealed class CoreSupervisor : IDisposable
             }
             catch { }
 
-            _pipeStream?.Dispose();
+            _readCts?.Cancel();
+        _readCts?.Dispose();
+        _pipeStream?.Dispose();
+        _writeLock.Dispose();
             _pipeStream = null;
 
             if (_jobHandle != IntPtr.Zero)
@@ -385,7 +451,10 @@ public sealed class CoreSupervisor : IDisposable
         }
         catch { }
 
+        _readCts?.Cancel();
+        _readCts?.Dispose();
         _pipeStream?.Dispose();
+        _writeLock.Dispose();
 
         if (_jobHandle != IntPtr.Zero)
         {

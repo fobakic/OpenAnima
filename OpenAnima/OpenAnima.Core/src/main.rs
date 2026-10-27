@@ -222,6 +222,7 @@ fn run() -> Result<(), String> {
     unsafe { win::overlay::set_manager(overlays_ptr) };
 
     let server = ipc::IpcServer::start().map_err(|e| format!("ipc server: {e}"))?;
+    core.broadcaster = Some(server.broadcaster());
     println!(
         "anima-core {} listening on {} (pid {})",
         env!("CARGO_PKG_VERSION"),

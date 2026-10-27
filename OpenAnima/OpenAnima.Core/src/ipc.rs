@@ -38,6 +38,20 @@ pub enum Command {
     Broadcast(Event),
 }
 
+#[derive(Clone)]
+pub struct Broadcaster {
+    clients: Arc<Mutex<Vec<ClientHandle>>>,
+}
+
+impl Broadcaster {
+    pub fn broadcast(&self, event: Event) {
+        let clients = self.clients.lock().unwrap();
+        for client in clients.iter() {
+            let _ = client.events.send(event.clone());
+        }
+    }
+}
+
 /// Shared handle to the running server.
 pub struct IpcServer {
     /// Queue consumed by the UI thread.
@@ -109,9 +123,13 @@ impl IpcServer {
 
     /// Broadcasts an event to every connected client.
     pub fn broadcast(&self, event: Event) {
-        let clients = self.clients.lock().unwrap();
-        for client in clients.iter() {
-            let _ = client.events.send(event.clone());
+        self.broadcaster().broadcast(event);
+    }
+
+    /// Obtains a cloneable, Send+Sync broadcaster handle.
+    pub fn broadcaster(&self) -> Broadcaster {
+        Broadcaster {
+            clients: self.clients.clone(),
         }
     }
 

@@ -113,9 +113,40 @@
 
     <!-- Tray Context Menu -->
     <sys:String x:Key="Tray_Open">Открыть OpenAnima</sys:String>
+    <sys:String x:Key="Tray_Profiles">Профили</sys:String>
     <sys:String x:Key="Tray_HideAll">Скрыть всех персонажей</sys:String>
     <sys:String x:Key="Tray_ShowAll">Показать всех персонажей</sys:String>
     <sys:String x:Key="Tray_StopAll">Остановить всех</sys:String>
     <sys:String x:Key="Tray_Exit">Выход</sys:String>
+
+    <!-- Profiles & Global Hotkeys -->
+    <sys:String x:Key="Header_Profile">Профиль:</sys:String>
+    <sys:String x:Key="Profile_Default">Обычный (Ctrl+Shift+D)</sys:String>
+    <sys:String x:Key="Profile_Gaming">Игровой (Ctrl+Shift+G)</sys:String>
+    <sys:String x:Key="Profile_Work">Рабочий (Ctrl+Shift+W)</sys:String>
+    <sys:String x:Key="Profile_Chill">Отдых (Ctrl+Shift+C)</sys:String>
+    <sys:String x:Key="Settings_Hotkeys_Title">Профили и глобальные хоткеи</sys:String>
+    <sys:String x:Key="Settings_Hotkeys_Desc">Мгновенное переключение режимов персонажей через Win32 хоткеи</sys:String>
+    <sys:String x:Key="Settings_Hotkeys_Enable">Включить глобальные горячие клавиши</sys:String>
+    <sys:String x:Key="Settings_Hotkeys_Conflict">Конфликт хоткея: комбинация '{0}' занята другой программой.</sys:String>
+    <sys:String x:Key="Tools_BtnConvertMp4">Конвертировать MP4...</sys:String>
+    <!-- Converter Dialog -->
+    <sys:String x:Key="Convert_Title">Конвертация MP4 в оптимизированный APNG</sys:String>
+    <sys:String x:Key="Convert_InputFile">Исходное видео MP4:</sys:String>
+    <sys:String x:Key="Convert_OutputFile">Выходной файл APNG:</sys:String>
+    <sys:String x:Key="Convert_Browse">Обзор...</sys:String>
+    <sys:String x:Key="Convert_Fps">Частота кадров (FPS):</sys:String>
+    <sys:String x:Key="Convert_MaxSize">Макс. размер (px):</sys:String>
+    <sys:String x:Key="Convert_ChromaKey">Удаление сплошного фона (Хромакей)</sys:String>
+    <sys:String x:Key="Convert_ChromaContiguous">Только снаружи (защита белых деталей внутри персонажа)</sys:String>
+    <sys:String x:Key="Convert_ChromaTolerance">Допуск цвета:</sys:String>
+    <sys:String x:Key="Convert_ChromaColor">Цвет фона (HEX):</sys:String>
+    <sys:String x:Key="Convert_BtnStart">Начать конвертацию</sys:String>
+    <sys:String x:Key="Convert_BtnCancel">Отмена</sys:String>
+    <sys:String x:Key="Convert_Cancelled">Конвертация отменена.</sys:String>
+    <sys:String x:Key="Convert_Cancelling">Отмена...</sys:String>
+    <sys:String x:Key="Convert_Success">Конвертация успешно завершена!</sys:String>
+    <sys:String x:Key="Convert_Converting">Конвертация: {0:F0}%</sys:String>
+    <sys:String x:Key="Convert_CompletedFormat">Сохранено: {0}</sys:String>
 
 </ResourceDictionary>

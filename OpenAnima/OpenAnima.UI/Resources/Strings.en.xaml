@@ -113,9 +113,40 @@
 
     <!-- Tray Context Menu -->
     <sys:String x:Key="Tray_Open">Open OpenAnima</sys:String>
+    <sys:String x:Key="Tray_Profiles">Profiles</sys:String>
     <sys:String x:Key="Tray_HideAll">Hide all characters</sys:String>
     <sys:String x:Key="Tray_ShowAll">Show all characters</sys:String>
     <sys:String x:Key="Tray_StopAll">Stop all</sys:String>
     <sys:String x:Key="Tray_Exit">Exit</sys:String>
+
+    <!-- Profiles & Global Hotkeys -->
+    <sys:String x:Key="Header_Profile">Profile:</sys:String>
+    <sys:String x:Key="Profile_Default">Default (Ctrl+Shift+D)</sys:String>
+    <sys:String x:Key="Profile_Gaming">Gaming (Ctrl+Shift+G)</sys:String>
+    <sys:String x:Key="Profile_Work">Work (Ctrl+Shift+W)</sys:String>
+    <sys:String x:Key="Profile_Chill">Chill (Ctrl+Shift+C)</sys:String>
+    <sys:String x:Key="Settings_Hotkeys_Title">Profiles &amp; Global Hotkeys</sys:String>
+    <sys:String x:Key="Settings_Hotkeys_Desc">Instant zero-delay profile switching with Win32 global hotkeys</sys:String>
+    <sys:String x:Key="Settings_Hotkeys_Enable">Enable global hotkeys</sys:String>
+    <sys:String x:Key="Settings_Hotkeys_Conflict">Hotkey conflict: '{0}' is already in use by another program.</sys:String>
+    <sys:String x:Key="Tools_BtnConvertMp4">Convert MP4...</sys:String>
+    <!-- Converter Dialog -->
+    <sys:String x:Key="Convert_Title">Convert MP4 to Optimized APNG</sys:String>
+    <sys:String x:Key="Convert_InputFile">Source MP4 Video:</sys:String>
+    <sys:String x:Key="Convert_OutputFile">Output APNG File:</sys:String>
+    <sys:String x:Key="Convert_Browse">Browse...</sys:String>
+    <sys:String x:Key="Convert_Fps">Frame Rate (FPS):</sys:String>
+    <sys:String x:Key="Convert_MaxSize">Max Size (px):</sys:String>
+    <sys:String x:Key="Convert_ChromaKey">Remove solid background (Chroma Key)</sys:String>
+    <sys:String x:Key="Convert_ChromaContiguous">Contiguous only (protect internal white/keyed details)</sys:String>
+    <sys:String x:Key="Convert_ChromaTolerance">Tolerance:</sys:String>
+    <sys:String x:Key="Convert_ChromaColor">Background Color (Hex):</sys:String>
+    <sys:String x:Key="Convert_BtnStart">Start Conversion</sys:String>
+    <sys:String x:Key="Convert_BtnCancel">Cancel</sys:String>
+    <sys:String x:Key="Convert_Cancelled">Conversion cancelled.</sys:String>
+    <sys:String x:Key="Convert_Cancelling">Cancelling...</sys:String>
+    <sys:String x:Key="Convert_Success">Conversion completed successfully!</sys:String>
+    <sys:String x:Key="Convert_Converting">Converting: {0:F0}%</sys:String>
+    <sys:String x:Key="Convert_CompletedFormat">Saved to: {0}</sys:String>
 
 </ResourceDictionary>

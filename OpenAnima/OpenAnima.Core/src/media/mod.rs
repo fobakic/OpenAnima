@@ -3,6 +3,8 @@
 pub mod chroma;
 pub mod decode;
 pub mod resample;
+pub mod wmf;
+pub mod apng_encoder;
 
 pub use chroma::{apply_chroma_key, ChromaKeyConfig};
 pub use decode::{decode_file, FrameSet};

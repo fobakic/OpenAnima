@@ -142,4 +142,54 @@ public class AnimationService
         var resp = await _supervisor.SendCommandAsync("core.trim_memory").ConfigureAwait(false);
         return resp?["result"] as JsonObject;
     }
+
+    public async Task<bool> ConvertStartAsync(
+        string inPath,
+        string? outPath = null,
+        int fps = 20,
+        int maxDim = 384,
+        bool chromaKey = false,
+        string chromaColor = "#FFFFFF",
+        double chromaTolerance = 0.15,
+        bool chromaContiguous = true,
+        string? jobId = null)
+    {
+        await _supervisor.EnsureStartedAndConnectedAsync().ConfigureAwait(false);
+
+        var param = new JsonObject
+        {
+            ["in_path"] = inPath,
+            ["fps"] = fps,
+            ["max_dim"] = maxDim,
+            ["chroma_key"] = chromaKey,
+            ["chroma_color"] = chromaColor,
+            ["chroma_tolerance"] = chromaTolerance,
+            ["chroma_contiguous"] = chromaContiguous
+        };
+
+        if (!string.IsNullOrEmpty(outPath))
+        {
+            param["out_path"] = outPath;
+        }
+
+        if (!string.IsNullOrEmpty(jobId))
+        {
+            param["job_id"] = jobId;
+        }
+
+        var resp = await _supervisor.SendCommandAsync("media.convert_start", param).ConfigureAwait(false);
+        return resp != null && resp["ok"]?.GetValue<bool>() == true;
+    }
+
+    public async Task<bool> ConvertCancelAsync(string? jobId = null)
+    {
+        var param = new JsonObject();
+        if (!string.IsNullOrEmpty(jobId))
+        {
+            param["job_id"] = jobId;
+        }
+
+        var resp = await _supervisor.SendCommandAsync("media.convert_cancel", param).ConfigureAwait(false);
+        return resp != null && resp["ok"]?.GetValue<bool>() == true;
+    }
 }

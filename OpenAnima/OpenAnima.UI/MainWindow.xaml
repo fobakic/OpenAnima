@@ -17,6 +17,13 @@
     <Window.ContextMenu>
         <ContextMenu x:Name="TrayContextMenu">
             <MenuItem x:Name="MenuOpen" Header="{DynamicResource Tray_Open}" FontWeight="Bold" Click="MenuOpen_Click" />
+            <MenuItem x:Name="MenuProfiles" Header="{DynamicResource Tray_Profiles}">
+                <MenuItem x:Name="MenuProfileDefault" Header="{DynamicResource Profile_Default}" Click="ProfileMenuItem_Click" Tag="default" />
+                <MenuItem x:Name="MenuProfileGaming" Header="{DynamicResource Profile_Gaming}" Click="ProfileMenuItem_Click" Tag="gaming" />
+                <MenuItem x:Name="MenuProfileWork" Header="{DynamicResource Profile_Work}" Click="ProfileMenuItem_Click" Tag="work" />
+                <MenuItem x:Name="MenuProfileChill" Header="{DynamicResource Profile_Chill}" Click="ProfileMenuItem_Click" Tag="chill" />
+            </MenuItem>
+            <Separator />
             <MenuItem x:Name="MenuToggleOverlays" Header="{DynamicResource Tray_HideAll}" Click="MenuToggleOverlays_Click" />
             <MenuItem x:Name="MenuStopAll" Header="{DynamicResource Tray_StopAll}" Click="BtnStopAll_Click" />
             <Separator />
@@ -50,6 +57,12 @@
                 </StackPanel>
 
                 <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center">
+                    <ComboBox x:Name="CmbActiveProfile" Width="175" Margin="0,0,10,0" SelectionChanged="CmbActiveProfile_SelectionChanged" VerticalAlignment="Center">
+                        <ComboBoxItem Tag="default" Content="{DynamicResource Profile_Default}" />
+                        <ComboBoxItem Tag="gaming" Content="{DynamicResource Profile_Gaming}" />
+                        <ComboBoxItem Tag="work" Content="{DynamicResource Profile_Work}" />
+                        <ComboBoxItem Tag="chill" Content="{DynamicResource Profile_Chill}" />
+                    </ComboBox>
                     <ui:Badge x:Name="BadgeActiveCount" Content="{DynamicResource Active_Count_Zero}" Appearance="Secondary" Margin="0,0,10,0" VerticalAlignment="Center" />
                     <ui:Button x:Name="BtnToggleAllOverlays" Content="{DynamicResource Header_HideAll}" Icon="{ui:SymbolIcon EyeOff24}" Padding="10,6" Appearance="Transparent" Click="MenuToggleOverlays_Click" ToolTip="{DynamicResource Header_ToggleTooltip}" />
                 </StackPanel>
@@ -367,7 +380,7 @@
                                     <ui:TextBlock Text="{DynamicResource Tools_Mp4_Desc}" 
                                                   TextWrapping="Wrap" Foreground="{DynamicResource TextFillColorSecondaryBrush}" />
                                 </StackPanel>
-                                <ui:Badge Grid.Column="1" Content="{DynamicResource Tools_InDev}" Appearance="Secondary" VerticalAlignment="Center" />
+                                <ui:Button Grid.Column="1" Content="{DynamicResource Tools_BtnConvertMp4}" Icon="{ui:SymbolIcon VideoClip24}" Appearance="Primary" Click="BtnOpenMp4Converter_Click" VerticalAlignment="Center" />
                             </Grid>
                         </ui:Card>
 
@@ -382,7 +395,9 @@
                                     <ui:TextBlock Text="{DynamicResource Tools_Ai_Desc}" 
                                                   TextWrapping="Wrap" Foreground="{DynamicResource TextFillColorSecondaryBrush}" />
                                 </StackPanel>
-                                <ui:Badge Grid.Column="1" Content="{DynamicResource Tools_InDev}" Appearance="Secondary" VerticalAlignment="Center" />
+                                <Border Grid.Column="1" Background="#333333" CornerRadius="4" Padding="8,4" VerticalAlignment="Center">
+                                    <ui:TextBlock Text="{DynamicResource Tools_InDev}" FontSize="11" Foreground="#AAAAAA" />
+                                </Border>
                             </Grid>
                         </ui:Card>
                     </StackPanel>
@@ -427,7 +442,16 @@
                                 </StackPanel>
                             </ui:Card>
 
-                            <!-- ITEM #3: Profile and Storage -->
+                            <!-- ITEM #3: Profiles & Global Hotkeys -->
+                            <ui:Card Margin="0,0,0,12" Padding="14">
+                                <StackPanel>
+                                    <ui:TextBlock Text="{DynamicResource Settings_Hotkeys_Title}" FontWeight="SemiBold" Margin="0,0,0,4" />
+                                    <ui:TextBlock Text="{DynamicResource Settings_Hotkeys_Desc}" 
+                                                  Foreground="{DynamicResource TextFillColorSecondaryBrush}" TextWrapping="Wrap" Margin="0,0,0,10" />
+                                    <CheckBox x:Name="ChkGlobalHotkeys" Content="{DynamicResource Settings_Hotkeys_Enable}" Margin="0,0,0,8" Click="ChkGlobalHotkeys_Click" />
+                                    <ui:TextBlock x:Name="TxtHotkeyConflict" Visibility="Collapsed" Foreground="#FF5555" TextWrapping="Wrap" Margin="0,0,0,4" />
+                                </StackPanel>
+                            </ui:Card>
                             <ui:Card Margin="0,0,0,12" Padding="14">
                                 <StackPanel>
                                     <ui:TextBlock Text="{DynamicResource Settings_Profile_Title}" FontWeight="SemiBold" Margin="0,0,0,4" />

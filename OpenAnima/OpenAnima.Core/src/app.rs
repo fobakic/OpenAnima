@@ -27,6 +27,8 @@ pub struct Core {
     pub frames_decoded: u64,
     pub commands_handled: u64,
     pub quit: bool,
+    pub broadcaster: Option<crate::ipc::Broadcaster>,
+    pub active_conversions: Arc<std::sync::Mutex<HashMap<String, Arc<std::sync::atomic::AtomicBool>>>>,
 }
 
 impl Core {
@@ -40,6 +42,8 @@ impl Core {
             frames_decoded: 0,
             commands_handled: 0,
             quit: false,
+            broadcaster: None,
+            active_conversions: Arc::new(std::sync::Mutex::new(HashMap::new())),
         })
     }
 
@@ -78,7 +82,8 @@ impl Core {
                     "pid": std::process::id(),
                     "capabilities": [
                         "overlay.play", "overlay.stop", "overlay.list", "overlay.set",
-                        "media.info", "trigger.load", "trigger.start", "trigger.stop",
+                        "media.info", "media.convert_start", "media.convert_cancel",
+                        "trigger.load", "trigger.start", "trigger.stop",
                         "trigger.status", "core.stats"
                     ],
                     "engine": "ahash+dhash",
@@ -124,6 +129,9 @@ impl Core {
                     Err(e) => Response::err(req.id, e),
                 }
             }
+
+            "media.convert_start" => self.media_convert_start(req),
+            "media.convert_cancel" => self.media_convert_cancel(req),
 
             "overlay.play" => self.overlay_play(req),
             "overlay.stop" => {
@@ -402,6 +410,169 @@ impl Core {
             .collect()
     }
 
+    fn media_convert_start(&mut self, req: &Request) -> Response {
+        let params = &req.params;
+        let in_path_str = match params.get("in_path").and_then(Value::as_str) {
+            Some(s) if !s.is_empty() => s.to_string(),
+            _ => return Response::err(req.id, "missing or empty 'in_path'"),
+        };
+
+        let in_path = PathBuf::from(&in_path_str);
+        if !in_path.exists() {
+            return Response::err(req.id, format!("File not found: {}", in_path_str));
+        }
+
+        let out_path = if let Some(out_str) = params.get("out_path").and_then(Value::as_str) {
+            PathBuf::from(out_str)
+        } else {
+            let mut out = in_path.clone();
+            out.set_extension("apng");
+            out
+        };
+
+        let job_id = params
+            .get("job_id")
+            .and_then(Value::as_str)
+            .map(|s| s.to_string())
+            .unwrap_or_else(|| {
+                format!("job_{}", std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_millis())
+            });
+
+        let target_fps = params.get("fps").and_then(Value::as_u64).unwrap_or(20) as u32;
+        let max_dimension = params.get("max_dim").and_then(Value::as_u64).unwrap_or(384) as u32;
+
+        let chroma_enabled = params.get("chroma_key").and_then(Value::as_bool).unwrap_or(false);
+        let chroma_color = parse_hex_color(params.get("chroma_color").and_then(Value::as_str))
+            .unwrap_or([255, 255, 255]);
+        let chroma_tolerance = params.get("chroma_tolerance").and_then(Value::as_f64).unwrap_or(0.15) as f32;
+        let chroma_contiguous = params.get("chroma_contiguous").and_then(Value::as_bool).unwrap_or(true);
+
+        let options = crate::media::apng_encoder::ConversionOptions {
+            target_fps,
+            max_dimension,
+            chroma_key: ChromaKeyConfig {
+                enabled: chroma_enabled,
+                color_rgb: chroma_color,
+                tolerance: chroma_tolerance,
+                contiguous: chroma_contiguous,
+                feather: 0.04,
+            },
+            quality_level: 6,
+        };
+
+        let cancel_flag = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        {
+            let mut jobs = self.active_conversions.lock().unwrap();
+            jobs.insert(job_id.clone(), cancel_flag.clone());
+        }
+
+        let broadcaster_opt = self.broadcaster.clone();
+        let thread_job_id = job_id.clone();
+        let thread_in_path = in_path.clone();
+        let thread_out_path = out_path.clone();
+        let thread_cancel_flag = cancel_flag.clone();
+        let thread_active_conversions = self.active_conversions.clone();
+
+        if let Err(e) = std::thread::Builder::new()
+            .name(format!("convert-{}", job_id))
+            .spawn(move || {
+                log_core(&format!("Started conversion job {}: {} -> {}", thread_job_id, thread_in_path.display(), thread_out_path.display()));
+                let mut last_broadcast = std::time::Instant::now();
+
+                let res = crate::media::apng_encoder::convert_mp4_to_apng(
+                    &thread_in_path,
+                    &thread_out_path,
+                    &options,
+                    &thread_cancel_flag,
+                    |prog| {
+                        if let Some(ref broadcaster) = broadcaster_opt {
+                            if last_broadcast.elapsed().as_millis() >= 40 || prog.percent >= 99.0 {
+                                last_broadcast = std::time::Instant::now();
+                                broadcaster.broadcast(crate::proto::Event::new(
+                                    "convert.progress",
+                                    json!({
+                                        "job_id": thread_job_id,
+                                        "percent": prog.percent,
+                                        "current": prog.current_frame,
+                                        "total": prog.total_frames,
+                                    }),
+                                ));
+                            }
+                        }
+                    },
+                );
+
+                if let Some(ref broadcaster) = broadcaster_opt {
+                    match res {
+                        Ok(()) => {
+                            log_core(&format!("Conversion completed for job {}", thread_job_id));
+                            broadcaster.broadcast(crate::proto::Event::new(
+                                "convert.completed",
+                                json!({
+                                    "job_id": thread_job_id,
+                                    "in_path": thread_in_path.to_string_lossy(),
+                                    "out_path": thread_out_path.to_string_lossy(),
+                                }),
+                            ));
+                        }
+                        Err(ref e) if thread_cancel_flag.load(std::sync::atomic::Ordering::Relaxed) => {
+                            log_core(&format!("Conversion cancelled for job {}", thread_job_id));
+                            broadcaster.broadcast(crate::proto::Event::new(
+                                "convert.cancelled",
+                                json!({
+                                    "job_id": thread_job_id,
+                                }),
+                            ));
+                        }
+                        Err(ref e) => {
+                            log_core(&format!("Conversion error for job {}: {}", thread_job_id, e));
+                            broadcaster.broadcast(crate::proto::Event::new(
+                                "convert.error",
+                                json!({
+                                    "job_id": thread_job_id,
+                                    "error": e,
+                                }),
+                            ));
+                        }
+                    }
+                }
+
+                let mut jobs = thread_active_conversions.lock().unwrap();
+                jobs.remove(&thread_job_id);
+            }) {
+            return Response::err(req.id, format!("Failed to spawn conversion thread: {:?}", e));
+        }
+
+        Response::ok(
+            req.id,
+            json!({
+                "job_id": job_id,
+                "in_path": in_path.to_string_lossy(),
+                "out_path": out_path.to_string_lossy(),
+                "status": "started",
+            }),
+        )
+    }
+
+    fn media_convert_cancel(&mut self, req: &Request) -> Response {
+        let params = &req.params;
+        let job_id = params.get("job_id").and_then(Value::as_str);
+
+        let jobs = self.active_conversions.lock().unwrap();
+        if let Some(id) = job_id {
+            if let Some(flag) = jobs.get(id) {
+                flag.store(true, std::sync::atomic::Ordering::Relaxed);
+                return Response::ok(req.id, json!({ "status": "cancelling", "job_id": id }));
+            }
+            Response::err(req.id, format!("No active job with id '{}'", id))
+        } else {
+            for flag in jobs.values() {
+                flag.store(true, std::sync::atomic::Ordering::Relaxed);
+            }
+            Response::ok(req.id, json!({ "status": "cancelling_all" }))
+        }
+    }
+
     fn stats(&self) -> Value {
         json!({
             "pid": std::process::id(),
@@ -512,4 +683,18 @@ fn parse_hex_color(s: Option<&str>) -> Option<[u8; 3]> {
 /// Normalises a path so the media cache hits consistently.
 fn normalize(path: &Path) -> PathBuf {
     std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf())
+}
+
+pub fn log_core(msg: &str) {
+    if let Ok(local_app_data) = std::env::var("LOCALAPPDATA") {
+        let mut path = std::path::PathBuf::from(local_app_data);
+        path.push("OpenAnima");
+        path.push("logs");
+        let _ = std::fs::create_dir_all(&path);
+        path.push("openanima_core.log");
+        if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(path) {
+            use std::io::Write;
+            let _ = writeln!(f, "[{:?}] {}", std::time::SystemTime::now(), msg);
+        }
+    }
 }

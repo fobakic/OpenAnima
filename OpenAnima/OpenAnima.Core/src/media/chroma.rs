@@ -76,7 +76,7 @@ pub fn apply_chroma_key(raw: &FrameSet, cfg: &ChromaKeyConfig) -> FrameSet {
     }
 }
 
-fn apply_to_frame(frame: &Frame, cfg: &ChromaKeyConfig) -> Frame {
+pub fn apply_to_frame(frame: &Frame, cfg: &ChromaKeyConfig) -> Frame {
     let w = frame.width as usize;
     let h = frame.height as usize;
     if w == 0 || h == 0 || frame.bgra.len() < w * h * 4 {
