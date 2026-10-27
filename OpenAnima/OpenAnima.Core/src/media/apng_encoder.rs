@@ -169,6 +169,8 @@ pub fn encode_apng(
 
         if idx == 0 {
             // First frame: must be full canvas
+            writer.reset_frame_position()
+                .map_err(|e| format!("reset_frame_position failed: {:?}", e))?;
             writer.set_frame_dimension(width, height)
                 .map_err(|e| format!("set_frame_dimension failed: {:?}", e))?;
             writer.set_frame_position(0, 0)
@@ -191,6 +193,8 @@ pub fn encode_apng(
 
             let sub_data = extract_subframe(&frame.rgba, width, &rect);
 
+            writer.reset_frame_position()
+                .map_err(|e| format!("reset_frame_position failed: {:?}", e))?;
             writer.set_frame_dimension(rect.width, rect.height)
                 .map_err(|e| format!("set_frame_dimension failed: {:?}", e))?;
             writer.set_frame_position(rect.x, rect.y)
@@ -215,7 +219,7 @@ pub fn encode_apng(
     Ok(())
 }
 
-/// Converts an MP4 file to an optimized APNG using WMF decoder and APNG pipeline.
+/// Converts an MP4 file to an optimized APNG using WMF decoder and APNG pipeline (streaming mode).
 pub fn convert_mp4_to_apng<F>(
     in_path: &Path,
     out_path: &Path,
@@ -254,17 +258,84 @@ where
         0
     };
 
-    let mut collected_frames: Vec<FrameItem> = Vec::new();
+    let file = File::create(out_path)
+        .map_err(|e| format!("Failed to create output file: {:?}", e))?;
+    let mut w = BufWriter::new(file);
+
+    let mut encoder = png::Encoder::new(&mut w, target_w, target_h);
+    encoder.set_color(png::ColorType::Rgba);
+    encoder.set_depth(png::BitDepth::Eight);
+    let initial_hint = (total_est_frames.max(1) as u32).min(500_000);
+    encoder.set_animated(initial_hint, 0)
+        .map_err(|e| format!("set_animated failed: {:?}", e))?;
+
+    let mut writer = encoder.write_header()
+        .map_err(|e| format!("write_header failed: {:?}", e))?;
+
+    let mut written_count = 0u32;
+    let mut prev_frame: Option<Vec<u8>> = None;
+    let mut pending_frame: Option<(Vec<u8>, u16)> = None;
+
+    let write_frame_to_apng = |frame_rgba: &[u8], delay_ms: u16, writer: &mut png::Writer<&mut BufWriter<File>>, prev: &mut Option<Vec<u8>>, count: &mut u32| -> Result<(), String> {
+        let delay_ms = delay_ms.max(10);
+        let num = delay_ms;
+        let den = 1000;
+
+        if *count == 0 {
+            writer.reset_frame_position()
+                .map_err(|e| format!("reset_frame_position failed: {:?}", e))?;
+            writer.set_frame_dimension(target_w, target_h)
+                .map_err(|e| format!("set_frame_dimension failed: {:?}", e))?;
+            writer.set_frame_position(0, 0)
+                .map_err(|e| format!("set_frame_position failed: {:?}", e))?;
+            writer.set_frame_delay(num, den)
+                .map_err(|e| format!("set_frame_delay failed: {:?}", e))?;
+            writer.set_blend_op(png::BlendOp::Source)
+                .map_err(|e| format!("set_blend_op failed: {:?}", e))?;
+            writer.set_dispose_op(png::DisposeOp::None)
+                .map_err(|e| format!("set_dispose_op failed: {:?}", e))?;
+            writer.write_image_data(frame_rgba)
+                .map_err(|e| format!("write_image_data failed: {:?}", e))?;
+        } else {
+            let prev_ref = prev.as_ref().unwrap();
+            let rect = calculate_diff_box(prev_ref, frame_rgba, target_w, target_h)
+                .unwrap_or(Rect { x: 0, y: 0, width: 1, height: 1 });
+
+            let sub_data = extract_subframe(frame_rgba, target_w, &rect);
+
+            writer.reset_frame_position()
+                .map_err(|e| format!("reset_frame_position failed: {:?}", e))?;
+            writer.set_frame_dimension(rect.width, rect.height)
+                .map_err(|e| format!("set_frame_dimension failed: {:?}", e))?;
+            writer.set_frame_position(rect.x, rect.y)
+                .map_err(|e| format!("set_frame_position failed: {:?}", e))?;
+            writer.set_frame_delay(num, den)
+                .map_err(|e| format!("set_frame_delay failed: {:?}", e))?;
+            writer.set_blend_op(png::BlendOp::Source)
+                .map_err(|e| format!("set_blend_op failed: {:?}", e))?;
+            writer.set_dispose_op(png::DisposeOp::None)
+                .map_err(|e| format!("set_dispose_op failed: {:?}", e))?;
+            writer.write_image_data(&sub_data)
+                .map_err(|e| format!("write_image_data failed: {:?}", e))?;
+        }
+
+        *prev = Some(frame_rgba.to_vec());
+        *count += 1;
+        Ok(())
+    };
+
     let mut next_timestamp_target = 0.0f64;
     let mut decoded_count = 0usize;
 
     while let Some(decoded) = decoder.read_next_frame()? {
         if cancel_flag.load(std::sync::atomic::Ordering::Relaxed) {
+            drop(writer);
+            drop(w);
+            let _ = std::fs::remove_file(out_path);
             return Err("Conversion cancelled by user".to_string());
         }
 
         if decoded.timestamp_secs + 0.005 < next_timestamp_target {
-            // Skip frame to match target FPS
             continue;
         }
 
@@ -306,21 +377,25 @@ where
             clean_dirty_alpha(&mut rgba);
         }
 
-        // Step 5: Frame coalescing
+        // Step 5: Frame coalescing & streaming write
         let delay_ms = (frame_interval_secs * 1000.0).round() as u16;
-        if let Some(last) = collected_frames.last_mut() {
-            if last.rgba == rgba {
-                last.delay_ms = last.delay_ms.saturating_add(delay_ms);
-                continue;
+        if let Some((ref mut p_rgba, ref mut p_delay)) = pending_frame {
+            if *p_rgba == rgba {
+                *p_delay = p_delay.saturating_add(delay_ms);
+            } else {
+                let to_write_rgba = std::mem::replace(p_rgba, rgba);
+                let to_write_delay = *p_delay;
+                *p_delay = delay_ms;
+                write_frame_to_apng(&to_write_rgba, to_write_delay, &mut writer, &mut prev_frame, &mut written_count)?;
             }
+        } else {
+            pending_frame = Some((rgba, delay_ms));
         }
 
-        collected_frames.push(FrameItem { rgba, delay_ms });
-
         let percent = if total_est_frames > 0 {
-            ((decoded_count as f32) / (total_est_frames as f32) * 80.0).min(80.0)
+            ((decoded_count as f32) / (total_est_frames as f32) * 98.0).min(98.0)
         } else {
-            40.0
+            50.0
         };
 
         progress_cb(ConversionProgress {
@@ -330,30 +405,69 @@ where
         });
     }
 
-    if collected_frames.is_empty() {
+    // Flush final pending frame
+    if let Some((p_rgba, p_delay)) = pending_frame.take() {
+        write_frame_to_apng(&p_rgba, p_delay, &mut writer, &mut prev_frame, &mut written_count)?;
+    }
+
+    if written_count == 0 {
+        drop(writer);
+        drop(w);
+        let _ = std::fs::remove_file(out_path);
         return Err("No valid frames decoded from video".to_string());
     }
 
-    if cancel_flag.load(std::sync::atomic::Ordering::Relaxed) {
-        return Err("Conversion cancelled by user".to_string());
-    }
+    writer.finish().map_err(|e| format!("writer finish failed: {:?}", e))?;
+    drop(w);
+
+    // Step 6: Patch acTL chunk with exact written_count
+    let _ = patch_actl_num_frames(out_path, written_count);
 
     progress_cb(ConversionProgress {
         current_frame: decoded_count,
-        total_frames: total_est_frames,
-        percent: 85.0,
-    });
-
-    // Step 6: Encode optimized APNG
-    encode_apng(collected_frames, target_w, target_h, out_path)?;
-
-    progress_cb(ConversionProgress {
-        current_frame: total_est_frames,
         total_frames: total_est_frames,
         percent: 100.0,
     });
 
     Ok(())
+}
+
+pub fn patch_actl_num_frames(file_path: &Path, actual_count: u32) -> std::io::Result<()> {
+    use std::fs::OpenOptions;
+    use std::io::{Read, Seek, SeekFrom, Write};
+
+    let mut file = OpenOptions::new().read(true).write(true).open(file_path)?;
+    let mut header = [0u8; 128];
+    let n = file.read(&mut header)?;
+    if let Some(pos) = header[..n].windows(4).position(|w| w == b"acTL") {
+        let num_frames_offset = pos + 4;
+        let crc_offset = pos + 12;
+
+        if crc_offset + 4 <= n {
+            header[num_frames_offset..num_frames_offset + 4].copy_from_slice(&actual_count.to_be_bytes());
+            let crc = crc32(&header[pos..pos + 12]);
+            header[crc_offset..crc_offset + 4].copy_from_slice(&crc.to_be_bytes());
+
+            file.seek(SeekFrom::Start(pos as u64))?;
+            file.write_all(&header[pos..crc_offset + 4])?;
+        }
+    }
+    Ok(())
+}
+
+pub fn crc32(data: &[u8]) -> u32 {
+    let mut crc = 0xFFFF_FFFFu32;
+    for &byte in data {
+        crc ^= byte as u32;
+        for _ in 0..8 {
+            if crc & 1 != 0 {
+                crc = (crc >> 1) ^ 0xEDB8_8320;
+            } else {
+                crc >>= 1;
+            }
+        }
+    }
+    !crc
 }
 
 #[cfg(test)]
@@ -427,5 +541,47 @@ mod tests {
         // Subframe top-right should be (2, 1)
         assert_eq!(sub[4], 2);
         assert_eq!(sub[5], 1);
+    }
+
+    #[test]
+    fn test_png_encoder_streaming_mismatch() {
+        let mut out = Vec::new();
+        let mut encoder = png::Encoder::new(&mut out, 10, 10);
+        encoder.set_color(png::ColorType::Rgba);
+        encoder.set_depth(png::BitDepth::Eight);
+        encoder.set_animated(100, 0).unwrap();
+        let mut writer = encoder.write_header().unwrap();
+        
+        let frame_data = vec![255u8; 10 * 10 * 4];
+        writer.set_frame_delay(100, 1000).unwrap();
+        writer.write_image_data(&frame_data).unwrap();
+
+        // Write 2nd frame
+        writer.set_frame_dimension(10, 10).unwrap();
+        writer.set_frame_position(0, 0).unwrap();
+        writer.set_frame_delay(100, 1000).unwrap();
+        writer.write_image_data(&frame_data).unwrap();
+
+        let res = writer.finish();
+        println!("writer.finish() result with 2 frames instead of 100: {:?}", res);
+        assert!(res.is_ok());
+
+        // Check acTL chunk at offset 33
+        assert_eq!(&out[37..41], b"acTL");
+        let initial_num_frames = u32::from_be_bytes([out[41], out[42], out[43], out[44]]);
+        println!("initial acTL num_frames: {}", initial_num_frames);
+        assert_eq!(initial_num_frames, 100);
+
+        // Test decoder on this APNG
+        let decoder = png::Decoder::new(&out[..]);
+        let reader = decoder.read_info().unwrap();
+        let info = reader.info();
+        println!("Reader animation control: {:?}", info.animation_control);
+
+        // Verify CRC computation
+        let actl_data = &out[37..49]; // "acTL" + 4 bytes num_frames + 4 bytes num_plays
+        let actl_crc = u32::from_be_bytes([out[49], out[50], out[51], out[52]]);
+        assert_eq!(crc32(actl_data), actl_crc);
+        println!("CRC32 match verified!");
     }
 }

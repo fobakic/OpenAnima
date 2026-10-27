@@ -18,7 +18,7 @@ namespace OpenAnima.UI.Services;
 public sealed class CoreSupervisor : IDisposable
 {
     private const string PipeName = "openanima-core-v1";
-    private const int MaxMemoryMb = 500;
+    private const int MaxMemoryMb = 1024;
 
     public event Action<int>? OnCoreExited;
     public event Action<string, JsonObject?>? OnBroadcastEventReceived;
