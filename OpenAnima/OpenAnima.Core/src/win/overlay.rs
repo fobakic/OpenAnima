@@ -19,7 +19,7 @@ use windows::core::{w, PCWSTR};
 use windows::Win32::Foundation::{COLORREF, HINSTANCE, HWND, LPARAM, LRESULT, POINT, RECT, SIZE, WPARAM};
 use windows::Win32::Graphics::Gdi::{
     CreateCompatibleDC, CreateDIBSection, DeleteDC, DeleteObject, GetMonitorInfoW, HBRUSH, HBITMAP,
-    HDC, HGDIOBJ, MonitorFromWindow, SelectObject, AC_SRC_ALPHA, AC_SRC_OVER, BI_RGB, BITMAPINFO,
+    HDC, HGDIOBJ, MonitorFromPoint, MonitorFromWindow, SelectObject, AC_SRC_ALPHA, AC_SRC_OVER, BI_RGB, BITMAPINFO,
     BITMAPINFOHEADER, BLENDFUNCTION, DIB_RGB_COLORS, MONITORINFO, MONITOR_DEFAULTTONEAREST,
 };
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
@@ -145,11 +145,6 @@ fn unregister_id(hwnd: isize) {
     if let Some(map) = guard.as_mut() {
         map.remove(&hwnd);
     }
-}
-
-fn lookup_id(hwnd: isize) -> Option<OverlayId> {
-    let guard = OVERLAY_IDS.lock().unwrap();
-    guard.as_ref().and_then(|m| m.get(&hwnd).copied())
 }
 
 /// Global handle to the overlay manager, so the window proc can reach it.
@@ -404,11 +399,30 @@ impl Overlay {
                 let bounce_lift = (self.physics.spring_phase.sin().abs()) * self.physics.spring_amp;
                 let target_y = (max_y as f64 - bounce_lift).round() as i32;
                 if target_y != self.y {
-                    self.move_to(self.x, target_y);
+                    self.y = target_y;
+                    self.physics.exact_y = target_y as f64;
+                    self.last_presented_y = target_y;
+                    if !self.virtual_only {
+                        with_programmatic_update(|| unsafe {
+                            let _ = SetWindowPos(
+                                self.hwnd,
+                                None,
+                                self.x,
+                                target_y,
+                                0,
+                                0,
+                                SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE,
+                            );
+                        });
+                    }
                 }
             } else {
                 self.physics.spring_amp = 0.0;
-                if self.y != max_y {
+                if self.y < max_y {
+                    // Floor dropped beneath pet (e.g. walked onto a taller monitor with lower taskbar) -> fall naturally
+                    self.physics.is_grounded = false;
+                    self.physics.vy = 0.0;
+                } else if self.y > max_y {
                     self.move_to(self.x, max_y);
                 }
                 if self.current_interval_ms != self.base_interval_ms {
@@ -418,8 +432,8 @@ impl Overlay {
             return;
         }
 
-        // Apply gravity: 2200 px/s^2 gives a snappy, responsive desktop pet drop
-        self.physics.vy += 2200.0 * dt;
+        // Apply gravity: 2200 px/s^2, clamp to 3500 px/s terminal velocity to prevent tunneling
+        self.physics.vy = (self.physics.vy + 2200.0 * dt).min(3500.0);
         // Air resistance
         self.physics.vx *= (1.0 - 0.7 * dt).max(0.0);
 
@@ -428,28 +442,33 @@ impl Overlay {
 
         // Bounce on left/right screen edges with multi-monitor pass-through
         let wall_restitution = if self.physics.bouncy { 0.65 } else { 0.20 };
+        let test_y = (self.y + self.height / 2).clamp(work.top, work.bottom - 1);
         if self.physics.exact_x < min_x as f64 {
             let has_left_monitor = unsafe {
-                let pt = windows::Win32::Foundation::POINT { x: min_x - 10, y: self.y };
+                let pt = windows::Win32::Foundation::POINT { x: min_x - 10, y: test_y };
                 let mon = windows::Win32::Graphics::Gdi::MonitorFromPoint(pt, windows::Win32::Graphics::Gdi::MONITOR_DEFAULTTONULL);
                 !mon.0.is_null()
             };
             if !has_left_monitor {
                 self.physics.exact_x = min_x as f64;
-                self.physics.vx = -self.physics.vx * wall_restitution;
+                if self.physics.vx < 0.0 {
+                    self.physics.vx = -self.physics.vx * wall_restitution;
+                }
                 if self.physics.vx > 10.0 {
                     self.flip_x = true;
                 }
             }
         } else if self.physics.exact_x > max_x as f64 {
             let has_right_monitor = unsafe {
-                let pt = windows::Win32::Foundation::POINT { x: max_x + self.width + 10, y: self.y };
+                let pt = windows::Win32::Foundation::POINT { x: max_x + self.width + 10, y: test_y };
                 let mon = windows::Win32::Graphics::Gdi::MonitorFromPoint(pt, windows::Win32::Graphics::Gdi::MONITOR_DEFAULTTONULL);
                 !mon.0.is_null()
             };
             if !has_right_monitor {
                 self.physics.exact_x = max_x as f64;
-                self.physics.vx = -self.physics.vx * wall_restitution;
+                if self.physics.vx > 0.0 {
+                    self.physics.vx = -self.physics.vx * wall_restitution;
+                }
                 if self.physics.vx < -10.0 {
                     self.flip_x = false;
                 }
@@ -463,8 +482,8 @@ impl Overlay {
             self.physics.vy = self.physics.vy.abs() * ceiling_restitution;
         }
 
-        // Landing on floor (taskbar top edge)
-        if self.physics.exact_y >= max_y as f64 {
+        // Landing on floor (taskbar top edge) - only when moving downward
+        if self.physics.exact_y >= max_y as f64 && self.physics.vy > 0.0 {
             self.physics.exact_y = max_y as f64;
             let impact_speed = self.physics.vy;
 
@@ -504,6 +523,8 @@ impl Overlay {
         if new_ix != self.x || new_iy != self.y {
             self.x = new_ix;
             self.y = new_iy;
+            self.last_presented_x = new_ix;
+            self.last_presented_y = new_iy;
             if !self.virtual_only {
                 with_programmatic_update(|| unsafe {
                     let _ = SetWindowPos(
@@ -606,19 +627,13 @@ impl Overlay {
 
         if self.flip_x {
             unsafe {
-                let dst = std::slice::from_raw_parts_mut(self.bits, needed);
+                let pixels = std::slice::from_raw_parts_mut(self.bits as *mut u32, (self.width * self.height) as usize);
                 let w = self.width as usize;
                 let mid = w / 2;
                 for y in 0..self.height as usize {
-                    let row_start = y * self.row_bytes;
-                    let row = &mut dst[row_start..row_start + (w * 4)];
+                    let row = &mut pixels[y * w..(y + 1) * w];
                     for x in 0..mid {
-                        let l = x * 4;
-                        let r = (w - 1 - x) * 4;
-                        row.swap(l, r);
-                        row.swap(l + 1, r + 1);
-                        row.swap(l + 2, r + 2);
-                        row.swap(l + 3, r + 3);
+                        row.swap(x, w - 1 - x);
                     }
                 }
             }
@@ -801,10 +816,13 @@ impl Overlay {
             self.scale = new_scale;
             return;
         }
+        let work = get_desktop_workarea_for_hwnd(self.hwnd);
+        let screen_h = (work.bottom - work.top).max(480);
+        self.screen_h = screen_h;
         let (new_w, new_h) = compute_dimensions(
             self.raw_frames.width,
             self.raw_frames.height,
-            self.screen_h,
+            screen_h,
             new_scale,
         );
 
@@ -823,6 +841,10 @@ impl Overlay {
         let delta_h = new_h - self.height;
         self.x -= delta_w / 2;
         self.y -= delta_h / 2;
+        self.physics.exact_x = self.x as f64;
+        self.physics.exact_y = self.y as f64;
+        self.last_presented_x = self.x;
+        self.last_presented_y = self.y;
 
         self.scale = new_scale;
         self.width = new_w;
@@ -984,7 +1006,17 @@ impl OverlayManager {
         let id = self.next_id;
         self.next_id += 1;
 
-        let screen_h = unsafe { GetSystemMetrics(SM_CYSCREEN) };
+        let pt = POINT { x, y };
+        let hmon = unsafe { MonitorFromPoint(pt, MONITOR_DEFAULTTONEAREST) };
+        let mut mi = MONITORINFO {
+            cbSize: std::mem::size_of::<MONITORINFO>() as u32,
+            ..Default::default()
+        };
+        let screen_h = if unsafe { GetMonitorInfoW(hmon, &mut mi) }.as_bool() {
+            (mi.rcWork.bottom - mi.rcWork.top).max(480)
+        } else {
+            unsafe { GetSystemMetrics(SM_CYSCREEN) }
+        };
         let (width, height) = compute_dimensions(
             raw_frames.width,
             raw_frames.height,
@@ -1079,6 +1111,8 @@ impl OverlayManager {
         let bottom_up = dib_orientation() == DibOrientation::BottomUp;
         let mem_dc = unsafe { CreateCompatibleDC(HDC::default()) };
         if mem_dc.is_invalid() {
+            unsafe { let _ = DestroyWindow(hwnd); }
+            unregister_id(hwnd.0 as isize);
             return Err("CreateCompatibleDC failed".into());
         }
 
@@ -1102,7 +1136,7 @@ impl OverlayManager {
         };
 
         let mut bits: *mut c_void = std::ptr::null_mut();
-        let dib = unsafe {
+        let dib_res = unsafe {
             CreateDIBSection(
                 mem_dc,
                 &mut bmi as *mut BITMAPINFO,
@@ -1111,8 +1145,18 @@ impl OverlayManager {
                 None,
                 0,
             )
-        }
-        .map_err(|e| format!("CreateDIBSection: {e}"))?;
+        };
+        let dib = match dib_res {
+            Ok(d) if !d.0.is_null() => d,
+            Ok(_) | Err(_) => {
+                unsafe {
+                    let _ = DeleteDC(mem_dc);
+                    let _ = DestroyWindow(hwnd);
+                }
+                unregister_id(hwnd.0 as isize);
+                return Err("CreateDIBSection failed".into());
+            }
+        };
 
         let old_obj = unsafe { SelectObject(mem_dc, dib) };
 
@@ -1330,8 +1374,18 @@ fn open_ui_settings_window() {
     }
 }
 
+#[inline(always)]
+fn get_overlay_id_from_hwnd(hwnd: HWND) -> Option<OverlayId> {
+    let id = unsafe { GetWindowLongPtrW(hwnd, GWLP_USERDATA) } as u64;
+    if id != 0 {
+        Some(id)
+    } else {
+        None
+    }
+}
+
 unsafe fn show_overlay_context_menu(hwnd: HWND, pt: POINT) {
-    let id = match lookup_id(hwnd.0 as isize) {
+    let id = match get_overlay_id_from_hwnd(hwnd) {
         Some(id) => id,
         None => return,
     };
@@ -1527,7 +1581,7 @@ unsafe extern "system" fn overlay_wnd_proc(
     if message == WM_ENTERSIZEMOVE {
         let mut rect = RECT::default();
         if unsafe { GetWindowRect(hwnd, &mut rect) }.is_ok() {
-            let id = lookup_id(hwnd.0 as isize);
+            let id = get_overlay_id_from_hwnd(hwnd);
             if let Some(id) = id {
                 let manager = MANAGER.load(Ordering::Acquire);
                 if !manager.is_null() {
@@ -1556,7 +1610,7 @@ unsafe extern "system" fn overlay_wnd_proc(
         }
         let mut rect = RECT::default();
         if unsafe { GetWindowRect(hwnd, &mut rect) }.is_ok() {
-            let id = lookup_id(hwnd.0 as isize);
+            let id = get_overlay_id_from_hwnd(hwnd);
             if let Some(id) = id {
                 let manager = MANAGER.load(Ordering::Acquire);
                 if !manager.is_null() {
@@ -1571,6 +1625,9 @@ unsafe extern "system" fn overlay_wnd_proc(
                                     let inst_vy = (rect.top - overlay.physics.last_drag_y) as f64 / dt;
                                     overlay.physics.vx = overlay.physics.vx * 0.35 + inst_vx * 0.65;
                                     overlay.physics.vy = overlay.physics.vy * 0.35 + inst_vy * 0.65;
+                                } else {
+                                    overlay.physics.vx = 0.0;
+                                    overlay.physics.vy = 0.0;
                                 }
                                 overlay.physics.last_drag_x = rect.left;
                                 overlay.physics.last_drag_y = rect.top;
@@ -1583,6 +1640,8 @@ unsafe extern "system" fn overlay_wnd_proc(
                         overlay.y = rect.top;
                         overlay.physics.exact_x = rect.left as f64;
                         overlay.physics.exact_y = rect.top as f64;
+                        overlay.last_presented_x = rect.left;
+                        overlay.last_presented_y = rect.top;
                     }
                 }
             }
@@ -1592,7 +1651,7 @@ unsafe extern "system" fn overlay_wnd_proc(
     if message == WM_EXITSIZEMOVE {
         let mut rect = RECT::default();
         if unsafe { GetWindowRect(hwnd, &mut rect) }.is_ok() {
-            let id = lookup_id(hwnd.0 as isize);
+            let id = get_overlay_id_from_hwnd(hwnd);
             if let Some(id) = id {
                 let manager = MANAGER.load(Ordering::Acquire);
                 if !manager.is_null() {
@@ -1601,6 +1660,8 @@ unsafe extern "system" fn overlay_wnd_proc(
                         overlay.y = rect.top;
                         overlay.physics.exact_x = rect.left as f64;
                         overlay.physics.exact_y = rect.top as f64;
+                        overlay.last_presented_x = rect.left;
+                        overlay.last_presented_y = rect.top;
                         overlay.apply_topmost();
 
                         overlay.physics.is_dragging = false;
@@ -1613,6 +1674,12 @@ unsafe extern "system" fn overlay_wnd_proc(
                             overlay.physics.vx = 0.0;
                             overlay.physics.vy = 0.0;
                         } else {
+                            if dt_since_last_move >= 0.002 {
+                                let inst_vx = (rect.left - overlay.physics.last_drag_x) as f64 / dt_since_last_move;
+                                let inst_vy = (rect.top - overlay.physics.last_drag_y) as f64 / dt_since_last_move;
+                                overlay.physics.vx = overlay.physics.vx * 0.35 + inst_vx * 0.65;
+                                overlay.physics.vy = overlay.physics.vy * 0.35 + inst_vy * 0.65;
+                            }
                             // Toss velocity with dynamic impulse multiplier
                             overlay.physics.vx = (overlay.physics.vx * 1.25).clamp(-3200.0, 3200.0);
                             overlay.physics.vy = (overlay.physics.vy * 1.25).clamp(-3200.0, 3200.0);
@@ -1627,9 +1694,11 @@ unsafe extern "system" fn overlay_wnd_proc(
                             let max_y = (work.bottom - overlay.height).max(work.top);
                             if overlay.y >= max_y && overlay.physics.vy.abs() < 100.0 {
                                 overlay.y = max_y;
+                                overlay.physics.exact_y = max_y as f64;
                                 overlay.physics.is_grounded = true;
                                 overlay.physics.vx = 0.0;
                                 overlay.physics.vy = 0.0;
+                                overlay.move_to(overlay.x, max_y);
                             } else {
                                 overlay.physics.is_grounded = false;
                             }
@@ -1646,7 +1715,7 @@ unsafe extern "system" fn overlay_wnd_proc(
         let delta = ((wparam.0 >> 16) as i16) as i32;
         // Check if Ctrl key is pressed (MK_CONTROL = 0x0008)
         if (keys & 0x0008) != 0 {
-            let id = lookup_id(hwnd.0 as isize);
+            let id = get_overlay_id_from_hwnd(hwnd);
             if let Some(id) = id {
                 let manager = MANAGER.load(Ordering::Acquire);
                 if !manager.is_null() {

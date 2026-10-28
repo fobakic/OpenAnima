@@ -26,7 +26,7 @@ use windows::Win32::Foundation::{
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows::Win32::UI::WindowsAndMessaging::{
     CreateWindowExW, DefWindowProcW, DestroyWindow, DispatchMessageW, GetWindowLongPtrW,
-    KillTimer, MsgWaitForMultipleObjects, PeekMessageW, PostQuitMessage, RegisterClassExW,
+    KillTimer, MsgWaitForMultipleObjects, PeekMessageW, RegisterClassExW,
     SetTimer, SetWindowLongPtrW, TranslateMessage, GWLP_USERDATA, HMENU, HWND_MESSAGE,
     MSG, PM_REMOVE, QS_ALLINPUT, WINDOW_EX_STYLE, WM_QUIT, WM_TIMER, WNDCLASSEXW,
     WS_OVERLAPPED,
@@ -311,7 +311,6 @@ fn run() -> Result<(), String> {
     core.overlays.destroy_all();
     unsafe {
         let _ = timeEndPeriod(1);
-        PostQuitMessage(0);
     }
     Ok(())
 }
