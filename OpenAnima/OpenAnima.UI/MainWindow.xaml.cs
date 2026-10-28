@@ -54,7 +54,8 @@ public partial class MainWindow : Window
 
     private readonly System.Collections.Concurrent.ConcurrentDictionary<long, PendingSliderUpdate> _pendingSliderUpdates = new();
     private readonly System.Windows.Threading.DispatcherTimer _sliderThrottleTimer;
-    private bool _isSendingSliderUpdate = false;
+    private volatile bool _isSendingSliderUpdate = false;
+    private readonly SemaphoreSlim _refreshStatusLock = new(1, 1);
 
     private AppConfig _config = new();
     private readonly HotkeyService _hotkeyService = new();
@@ -238,7 +239,7 @@ public partial class MainWindow : Window
 
             _supervisor.OnCoreExited += (exitCode) =>
             {
-                Dispatcher.Invoke(() =>
+                Dispatcher.BeginInvoke(() =>
                 {
                     foreach (var anim in _allAnimations)
                     {
@@ -426,55 +427,64 @@ public partial class MainWindow : Window
 
     private async Task RefreshCoreStatusAsync()
     {
-        TxtStatusBar.Text = LocalizationService.GetString("Status_Connecting");
-        bool connected = await _supervisor.EnsureStartedAndConnectedAsync();
+        if (!await _refreshStatusLock.WaitAsync(0))
+            return;
 
-        UpdateActiveBadgeText();
-
-        EmptyStateBorder.Visibility = _allAnimations.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
-
-        if (connected)
+        try
         {
-            var stats = await _animationService.GetStatsAsync();
-            long pid = stats?["pid"]?.GetValue<long>() ?? 0;
-            double coreWs = stats?["working_set_mb"]?.GetValue<double>() ?? 0;
-            double uiWs = System.Diagnostics.Process.GetCurrentProcess().WorkingSet64 / (1024.0 * 1024.0);
-            TxtStatusBar.Text = LocalizationService.Format("Status_CoreRunning_Format", coreWs, pid, uiWs);
-            TxtCoreStatus.Text = LocalizationService.Format("Status_CoreActive_Format", pid, coreWs, uiWs);
+            bool connected = await _supervisor.EnsureStartedAndConnectedAsync();
 
-            var activeList = await _animationService.ListOverlaysAsync();
-            if (activeList != null)
+            UpdateActiveBadgeText();
+
+            EmptyStateBorder.Visibility = _allAnimations.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
+
+            if (connected)
             {
-                var activeIds = new HashSet<long>();
-                foreach (var node in activeList)
+                var stats = await _animationService.GetStatsAsync();
+                long pid = stats?["pid"]?.GetValue<long>() ?? 0;
+                double coreWs = stats?["working_set_mb"]?.GetValue<double>() ?? 0;
+                double uiWs = System.Diagnostics.Process.GetCurrentProcess().WorkingSet64 / (1024.0 * 1024.0);
+                TxtStatusBar.Text = LocalizationService.Format("Status_CoreRunning_Format", coreWs, pid, uiWs);
+                TxtCoreStatus.Text = LocalizationService.Format("Status_CoreActive_Format", pid, coreWs, uiWs);
+
+                var activeList = await _animationService.ListOverlaysAsync();
+                if (activeList != null)
                 {
-                    long? id = (node?["overlay_id"] ?? node?["id"])?.GetValue<long>();
-                    if (id.HasValue)
+                    var activeIds = new HashSet<long>();
+                    foreach (var node in activeList)
                     {
-                        activeIds.Add(id.Value);
+                        long? id = (node?["overlay_id"] ?? node?["id"])?.GetValue<long>();
+                        if (id.HasValue)
+                        {
+                            activeIds.Add(id.Value);
+                        }
                     }
-                }
-                bool changed = false;
-                foreach (var anim in _allAnimations)
-                {
-                    if (anim.IsPlaying && anim.OverlayId.HasValue && !activeIds.Contains(anim.OverlayId.Value))
+                    bool changed = false;
+                    foreach (var anim in _allAnimations)
                     {
-                        anim.IsPlaying = false;
-                        anim.OverlayId = null;
-                        changed = true;
+                        if (anim.IsPlaying && anim.OverlayId.HasValue && !activeIds.Contains(anim.OverlayId.Value))
+                        {
+                            anim.IsPlaying = false;
+                            anim.OverlayId = null;
+                            changed = true;
+                        }
                     }
-                }
-                if (changed)
-                {
-                    UpdateActiveBadgeText();
-                    QueueSaveConfig();
+                    if (changed)
+                    {
+                        UpdateActiveBadgeText();
+                        QueueSaveConfig();
+                    }
                 }
             }
+            else
+            {
+                TxtStatusBar.Text = LocalizationService.GetString("Status_CoreError");
+                TxtCoreStatus.Text = LocalizationService.GetString("Status_CoreUnavailable");
+            }
         }
-        else
+        finally
         {
-            TxtStatusBar.Text = LocalizationService.GetString("Status_CoreError");
-            TxtCoreStatus.Text = LocalizationService.GetString("Status_CoreUnavailable");
+            _refreshStatusLock.Release();
         }
     }
 
@@ -507,7 +517,7 @@ public partial class MainWindow : Window
         if (_allAnimations.Any(a => a.FilePath.Equals(path, StringComparison.OrdinalIgnoreCase)))
             return;
 
-        _allAnimations.Add(new AnimationItem
+        var newItem = new AnimationItem
         {
             FilePath = path,
             Alpha = 1.0,
@@ -515,7 +525,9 @@ public partial class MainWindow : Window
             Smooth = true,
             AlwaysOnTop = true,
             ClickThrough = false
-        });
+        };
+        _allAnimations.Add(newItem);
+        _profileService?.NotifyBaseAnimationModified(path, 1.0, 20.0, false, false);
     }
 
     private void BtnAddAnimation_Click(object sender, RoutedEventArgs e)
@@ -625,27 +637,35 @@ public partial class MainWindow : Window
 
     private void SliderAlpha_ValueChanged(object sender, RoutedPropertyChangedEventArgs<double> e)
     {
-        if (sender is FrameworkElement { Tag: AnimationItem item } && item.IsPlaying && item.OverlayId.HasValue)
+        if (sender is FrameworkElement { Tag: AnimationItem item })
         {
-            _pendingSliderUpdates.AddOrUpdate(
-                item.OverlayId.Value,
-                id => new PendingSliderUpdate { OverlayId = id, Alpha = e.NewValue },
-                (id, p) => { p.Alpha = e.NewValue; return p; }
-            );
-            QueueSaveConfig();
+            _profileService?.NotifyBaseAnimationModified(item.FilePath, e.NewValue, item.Scale, item.ClickThrough, item.Physics);
+            if (item.IsPlaying && item.OverlayId.HasValue)
+            {
+                _pendingSliderUpdates.AddOrUpdate(
+                    item.OverlayId.Value,
+                    id => new PendingSliderUpdate { OverlayId = id, Alpha = e.NewValue },
+                    (id, p) => { p.Alpha = e.NewValue; return p; }
+                );
+                QueueSaveConfig();
+            }
         }
     }
 
     private void SliderScale_ValueChanged(object sender, RoutedPropertyChangedEventArgs<double> e)
     {
-        if (sender is FrameworkElement { Tag: AnimationItem item } && item.IsPlaying && item.OverlayId.HasValue)
+        if (sender is FrameworkElement { Tag: AnimationItem item })
         {
-            _pendingSliderUpdates.AddOrUpdate(
-                item.OverlayId.Value,
-                id => new PendingSliderUpdate { OverlayId = id, Scale = e.NewValue / 100.0 },
-                (id, p) => { p.Scale = e.NewValue / 100.0; return p; }
-            );
-            QueueSaveConfig();
+            _profileService?.NotifyBaseAnimationModified(item.FilePath, item.Alpha, e.NewValue, item.ClickThrough, item.Physics);
+            if (item.IsPlaying && item.OverlayId.HasValue)
+            {
+                _pendingSliderUpdates.AddOrUpdate(
+                    item.OverlayId.Value,
+                    id => new PendingSliderUpdate { OverlayId = id, Scale = e.NewValue / 100.0 },
+                    (id, p) => { p.Scale = e.NewValue / 100.0; return p; }
+                );
+                QueueSaveConfig();
+            }
         }
     }
 
@@ -657,6 +677,8 @@ public partial class MainWindow : Window
             {
                 item.ClickThrough = false;
             }
+
+            _profileService?.NotifyBaseAnimationModified(item.FilePath, item.Alpha, item.Scale, item.ClickThrough, item.Physics);
 
             if (item.IsPlaying && item.OverlayId.HasValue)
             {

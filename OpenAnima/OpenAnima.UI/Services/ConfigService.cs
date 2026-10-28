@@ -27,59 +27,67 @@ public class ConfigService
 
     public async Task<AppConfig> LoadAsync()
     {
-        string path = ConfigPath;
-        string bakPath = path + ".bak";
-
-        // Try main config file first
-        if (File.Exists(path))
+        await SaveLock.WaitAsync().ConfigureAwait(false);
+        try
         {
-            try
+            string path = ConfigPath;
+            string bakPath = path + ".bak";
+
+            // 1. Try main config file first
+            if (File.Exists(path))
             {
-                string json = await File.ReadAllTextAsync(path);
-                var config = JsonSerializer.Deserialize<AppConfig>(json, JsonOptions);
-                if (config != null)
+                try
                 {
-                    config.AutoStartWithWindows = IsAutoStartEnabled();
-                    EnsureDefaultProfiles(config);
-                    return config;
+                    string json = await File.ReadAllTextAsync(path).ConfigureAwait(false);
+                    var config = JsonSerializer.Deserialize<AppConfig>(json, JsonOptions);
+                    if (config != null)
+                    {
+                        config.AutoStartWithWindows = IsAutoStartEnabled();
+                        EnsureDefaultProfiles(config);
+                        return config;
+                    }
+                }
+                catch (Exception ex)
+                {
+                    App.Log($"[ConfigService] Error reading main config, attempting backup: {ex.Message}");
                 }
             }
-            catch (Exception ex)
-            {
-                App.Log($"[ConfigService] Error reading main config, attempting backup: {ex.Message}");
-            }
-        }
 
-        // Try backup file if main was missing or corrupt
-        if (File.Exists(bakPath))
-        {
-            try
+            // 2. Try backup file if main was missing or corrupt
+            if (File.Exists(bakPath))
             {
-                string json = await File.ReadAllTextAsync(bakPath);
-                var config = JsonSerializer.Deserialize<AppConfig>(json, JsonOptions);
-                if (config != null)
+                try
                 {
-                    config.AutoStartWithWindows = IsAutoStartEnabled();
-                    EnsureDefaultProfiles(config);
-                    App.Log("[ConfigService] Successfully restored config from backup (.bak)");
-                    return config;
+                    string json = await File.ReadAllTextAsync(bakPath).ConfigureAwait(false);
+                    var config = JsonSerializer.Deserialize<AppConfig>(json, JsonOptions);
+                    if (config != null)
+                    {
+                        config.AutoStartWithWindows = IsAutoStartEnabled();
+                        EnsureDefaultProfiles(config);
+                        App.Log("[ConfigService] Successfully restored config from backup (.bak)");
+                        return config;
+                    }
+                }
+                catch (Exception ex)
+                {
+                    App.Log($"[ConfigService] Error reading backup config: {ex.Message}");
                 }
             }
-            catch (Exception ex)
-            {
-                App.Log($"[ConfigService] Error reading backup config: {ex.Message}");
-            }
-        }
 
-        var defaultCfg = new AppConfig();
-        defaultCfg.AutoStartWithWindows = IsAutoStartEnabled();
-        EnsureDefaultProfiles(defaultCfg);
-        return defaultCfg;
+            var defaultCfg = new AppConfig();
+            defaultCfg.AutoStartWithWindows = IsAutoStartEnabled();
+            EnsureDefaultProfiles(defaultCfg);
+            return defaultCfg;
+        }
+        finally
+        {
+            SaveLock.Release();
+        }
     }
 
     public async Task SaveAsync(AppConfig config)
     {
-        await SaveLock.WaitAsync();
+        await SaveLock.WaitAsync().ConfigureAwait(false);
         try
         {
             string path = ConfigPath;
@@ -93,21 +101,33 @@ public class ConfigService
             string tmpPath = path + ".tmp";
             string bakPath = path + ".bak";
 
-            await File.WriteAllTextAsync(tmpPath, json);
+            await File.WriteAllTextAsync(tmpPath, json).ConfigureAwait(false);
 
             if (File.Exists(path))
             {
                 try
                 {
-                    File.Copy(path, bakPath, overwrite: true);
+                    var fi = new FileInfo(path);
+                    if (fi.Length > 0)
+                    {
+                        File.Replace(tmpPath, path, bakPath, ignoreMetadataErrors: true);
+                    }
+                    else
+                    {
+                        File.Move(tmpPath, path, overwrite: true);
+                    }
                 }
-                catch { }
+                catch
+                {
+                    File.Move(tmpPath, path, overwrite: true);
+                }
+            }
+            else
+            {
+                File.Move(tmpPath, path, overwrite: true);
             }
 
-            File.Move(tmpPath, path, overwrite: true);
             App.Log($"[ConfigService] Config saved atomically to {path}");
-
-            // Apply autostart setting
             SetAutoStart(config.AutoStartWithWindows);
         }
         catch (Exception ex)
@@ -142,14 +162,27 @@ public class ConfigService
             {
                 try
                 {
-                    File.Copy(path, bakPath, overwrite: true);
+                    var fi = new FileInfo(path);
+                    if (fi.Length > 0)
+                    {
+                        File.Replace(tmpPath, path, bakPath, ignoreMetadataErrors: true);
+                    }
+                    else
+                    {
+                        File.Move(tmpPath, path, overwrite: true);
+                    }
                 }
-                catch { }
+                catch
+                {
+                    File.Move(tmpPath, path, overwrite: true);
+                }
+            }
+            else
+            {
+                File.Move(tmpPath, path, overwrite: true);
             }
 
-            File.Move(tmpPath, path, overwrite: true);
             App.Log($"[ConfigService] Config saved atomically (sync) to {path}");
-
             SetAutoStart(config.AutoStartWithWindows);
         }
         catch (Exception ex)

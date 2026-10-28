@@ -50,6 +50,17 @@ impl Drop for WmfSession {
     }
 }
 
+/// RAII Guard ensuring IMFMediaBuffer::Unlock is reliably called when dropped.
+struct BufferLockGuard<'a>(&'a windows::Win32::Media::MediaFoundation::IMFMediaBuffer);
+
+impl<'a> Drop for BufferLockGuard<'a> {
+    fn drop(&mut self) {
+        unsafe {
+            let _ = self.0.Unlock();
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct VideoMetadata {
     pub width: u32,
@@ -218,47 +229,49 @@ impl WmfVideoDecoder {
                 buffer.Lock(&mut ptr, Some(&mut max_len), Some(&mut cur_len))
                     .map_err(|e| format!("Buffer Lock failed: {:?}", e))?;
 
-                struct BufferGuard<'a>(&'a windows::Win32::Media::MediaFoundation::IMFMediaBuffer);
-                impl<'a> Drop for BufferGuard<'a> {
-                    fn drop(&mut self) {
-                        unsafe {
-                            let _ = self.0.Unlock();
-                        }
-                    }
+                let _guard = BufferLockGuard(&buffer);
+
+                // Prevent Undefined Behavior on null pointer or empty samples
+                if ptr.is_null() || cur_len == 0 || cur_len < row_bytes as u32 {
+                    continue;
                 }
-                let _guard = BufferGuard(&buffer);
 
                 let src_slice = std::slice::from_raw_parts(ptr, cur_len as usize);
 
-                let effective_pitch = if height > 0 && cur_len >= (height * width * 4) {
-                    let calculated = (cur_len / height) as i32;
-                    if calculated >= (width * 4) as i32 {
-                        calculated
-                    } else {
-                        stride
-                    }
+                // Orientation MUST respect the authoritative stride from media type
+                let is_bottom_up = stride < 0;
+
+                // Pitch calculation: prioritize known stride, only deduce if cleanly divisible
+                let expected_bytes = (height * width * 4) as usize;
+                let pitch = if stride != 0 && stride.abs() >= (width * 4) as i32 {
+                    stride.abs() as usize
+                } else if height > 0 && (cur_len as usize) >= expected_bytes && (cur_len as usize % height as usize == 0) {
+                    (cur_len as usize) / (height as usize)
                 } else {
-                    stride
+                    row_bytes
                 };
-                let pitch = effective_pitch.abs() as usize;
 
-                let mut output = vec![0u8; (width * height * 4) as usize];
+                let total_bytes = (width * height * 4) as usize;
+                let mut output = vec![0u8; total_bytes];
 
-                let is_bottom_up = effective_pitch < 0;
+                // Fast path: bulk SIMD copy for contiguous top-down frames
+                if !is_bottom_up && pitch == row_bytes && src_slice.len() >= total_bytes {
+                    output.copy_from_slice(&src_slice[..total_bytes]);
+                } else {
+                    for y in 0..height as usize {
+                        let src_y = if is_bottom_up {
+                            height as usize - 1 - y
+                        } else {
+                            y
+                        };
 
-                for y in 0..height as usize {
-                    let src_y = if is_bottom_up {
-                        height as usize - 1 - y
-                    } else {
-                        y
-                    };
+                        let src_offset = src_y * pitch;
+                        let dst_offset = y * row_bytes;
 
-                    let src_offset = src_y * pitch;
-                    let dst_offset = y * row_bytes;
-
-                    if src_offset + row_bytes <= src_slice.len() {
-                        output[dst_offset..dst_offset + row_bytes]
-                            .copy_from_slice(&src_slice[src_offset..src_offset + row_bytes]);
+                        if src_offset + row_bytes <= src_slice.len() {
+                            output[dst_offset..dst_offset + row_bytes]
+                                .copy_from_slice(&src_slice[src_offset..src_offset + row_bytes]);
+                        }
                     }
                 }
 

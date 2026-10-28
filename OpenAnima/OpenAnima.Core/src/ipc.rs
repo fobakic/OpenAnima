@@ -254,42 +254,37 @@ fn serve_client(
     let mut writer = PipeWriter::new(handle);
 
     loop {
-        // Wait for an event or poll for incoming request without blocking indefinitely
-        match event_rx.recv_timeout(std::time::Duration::from_millis(50)) {
-            Ok(event) => {
-                if write_frame(&mut writer, &event).is_err() {
-                    break;
-                }
-                while let Ok(ev) = event_rx.try_recv() {
-                    if write_frame(&mut writer, &ev).is_err() {
-                        break;
-                    }
-                }
+        // 1. Drain pending events without blocking
+        while let Ok(ev) = event_rx.try_recv() {
+            if write_frame(&mut writer, &ev).is_err() {
+                break;
             }
-            Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {}
-            Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => break,
-        }
-
-        // Check if the client has sent bytes into the pipe
-        let mut bytes_avail = 0u32;
-        let peek_ok = unsafe {
-            windows::Win32::System::Pipes::PeekNamedPipe(
-                handle,
-                None,
-                0,
-                None,
-                Some(&mut bytes_avail),
-                None,
-            )
-        };
-
-        if peek_ok.is_err() {
-            // Client closed the pipe or disconnected
-            break;
         }
 
         let buffered_bytes = reader.buffer.len() - reader.position;
-        if buffered_bytes >= 4 || bytes_avail >= 4 {
+
+        // 2. Only query the kernel via PeekNamedPipe if we don't have a 4-byte header in user buffer
+        let mut bytes_avail = 0u32;
+        if buffered_bytes < 4 {
+            let peek_ok = unsafe {
+                windows::Win32::System::Pipes::PeekNamedPipe(
+                    handle,
+                    None,
+                    0,
+                    None,
+                    Some(&mut bytes_avail),
+                    None,
+                )
+            };
+
+            if peek_ok.is_err() {
+                // Client closed pipe
+                break;
+            }
+        }
+
+        // 3. Combined check prevents split-header deadlock
+        if buffered_bytes + (bytes_avail as usize) >= 4 {
             match read_frame(&mut reader) {
                 Ok(Some(req)) => {
                     let (reply_tx, reply_rx) = channel();
@@ -299,13 +294,9 @@ fn serve_client(
                     {
                         break;
                     }
-                    // Nudge the UI thread so it answers without waiting for its
-                    // next timeout.
                     unsafe {
                         let _ = SetEvent(HANDLE(wakeup as *mut std::ffi::c_void));
                     }
-                    // Block this connection until the UI thread answers. Requests
-                    // are answered in order, which keeps the protocol predictable.
                     match reply_rx.recv() {
                         Ok(resp) => {
                             if write_frame(&mut writer, &resp).is_err() {
@@ -314,10 +305,23 @@ fn serve_client(
                         }
                         Err(_) => break,
                     }
+                    // Immediately loop to handle any pipelined/buffered requests with 0ms latency
+                    continue;
                 }
                 Ok(None) => break,
                 Err(_) => break,
             }
+        }
+
+        // 4. Only wait if there are no requests ready to be processed
+        match event_rx.recv_timeout(std::time::Duration::from_millis(50)) {
+            Ok(event) => {
+                if write_frame(&mut writer, &event).is_err() {
+                    break;
+                }
+            }
+            Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {}
+            Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => break,
         }
     }
 
@@ -331,12 +335,11 @@ fn serve_client(
 /// Serialized writer half of a pipe connection.
 struct PipeWriter {
     handle: HANDLE,
-    buffer: Vec<u8>,
 }
 
 impl PipeWriter {
     fn new(handle: HANDLE) -> Self {
-        PipeWriter { handle, buffer: Vec::with_capacity(8192) }
+        PipeWriter { handle }
     }
 }
 
@@ -367,7 +370,7 @@ fn write_frame<W: Write + ?Sized>(writer: &mut W, value: &impl serde::Serialize)
     writer.flush()
 }
 
-/// Raw pipe reader with an internal buffer.
+/// Raw pipe reader with an internal buffer and direct zero-copy filling.
 struct PipeReader {
     handle: HANDLE,
     buffer: Vec<u8>,
@@ -376,30 +379,55 @@ struct PipeReader {
 
 impl PipeReader {
     fn new(handle: HANDLE) -> Self {
-        PipeReader { handle, buffer: Vec::new(), position: 0 }
+        PipeReader {
+            handle,
+            buffer: Vec::with_capacity(16 * 1024),
+            position: 0,
+        }
     }
 
     fn fill(&mut self, needed: usize) -> std::io::Result<bool> {
         if self.buffer.len() - self.position >= needed {
             return Ok(true);
         }
+
+        // Reclaim already parsed prefix space
         if self.position > 0 {
             self.buffer.drain(..self.position);
             self.position = 0;
         }
-        let mut chunk = [0u8; 16 * 1024];
+
+        // Prevent memory leaks / unbounded bloat on huge frames
+        if self.buffer.capacity() > 256 * 1024 && self.buffer.is_empty() {
+            self.buffer.shrink_to(64 * 1024);
+        }
+
         while self.buffer.len() < needed {
+            let additional_needed = needed - self.buffer.len();
+            // Read in at least 16 KB chunks to minimize ReadFile syscall overhead
+            let chunk_size = additional_needed.max(16 * 1024);
+            let old_len = self.buffer.len();
+            self.buffer.resize(old_len + chunk_size, 0);
+
             let mut read: u32 = 0;
             let ok = unsafe {
-                ReadFile(self.handle, Some(&mut chunk), Some(&mut read), None)
+                ReadFile(
+                    self.handle,
+                    Some(&mut self.buffer[old_len..]),
+                    Some(&mut read),
+                    None,
+                )
             };
+
+            // Clamp back to actual bytes received
+            self.buffer.truncate(old_len + read as usize);
+
             if ok.is_err() {
                 return Err(std::io::Error::last_os_error());
             }
             if read == 0 {
                 return Ok(false);
             }
-            self.buffer.extend_from_slice(&chunk[..read as usize]);
         }
         Ok(true)
     }
@@ -410,6 +438,7 @@ impl PipeReader {
 /// closed the connection.
 fn read_frame_value(reader: &mut PipeReader) -> std::io::Result<Option<serde_json::Value>> {
     if !reader.fill(4)? {
+        // Clean disconnect at frame boundary
         return Ok(None);
     }
     let len = u32::from_le_bytes([
@@ -421,10 +450,17 @@ fn read_frame_value(reader: &mut PipeReader) -> std::io::Result<Option<serde_jso
     reader.position += 4;
 
     if len > MAX_FRAME {
-        return Err(std::io::Error::other("frame too large"));
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            "frame too large",
+        ));
     }
     if !reader.fill(len)? {
-        return Ok(None);
+        // Stream aborted after sending header but before payload
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::UnexpectedEof,
+            "unexpected EOF while reading frame body",
+        ));
     }
     let body = &reader.buffer[reader.position..reader.position + len];
     reader.position += len;

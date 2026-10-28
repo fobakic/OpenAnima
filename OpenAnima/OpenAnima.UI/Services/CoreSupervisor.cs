@@ -232,22 +232,21 @@ public sealed class CoreSupervisor : IDisposable
             ["params"] = parameters ?? new JsonObject()
         };
 
-        var tcs = new TaskCompletionSource<JsonObject?>(TaskCreationOptions.RunContinuationsAsynchronously);
-        _pendingRequests[id] = tcs;
-
         byte[] jsonBytes = System.Text.Encoding.UTF8.GetBytes(reqObj.ToJsonString());
-        byte[] lenBytes = BitConverter.GetBytes((uint)jsonBytes.Length);
+        byte[] packet = new byte[4 + jsonBytes.Length];
+        System.Buffers.Binary.BinaryPrimitives.WriteUInt32LittleEndian(packet.AsSpan(0, 4), (uint)jsonBytes.Length);
+        jsonBytes.CopyTo(packet, 4);
+
+        var tcs = new TaskCompletionSource<JsonObject?>(TaskCreationOptions.RunContinuationsAsynchronously);
 
         await _writeLock.WaitAsync(ct).ConfigureAwait(false);
         try
         {
             if (_pipeStream == null || !_pipeStream.IsConnected)
-            {
-                _pendingRequests.TryRemove(id, out _);
                 return null;
-            }
-            await _pipeStream.WriteAsync(lenBytes, 0, 4, ct).ConfigureAwait(false);
-            await _pipeStream.WriteAsync(jsonBytes, 0, jsonBytes.Length, ct).ConfigureAwait(false);
+
+            _pendingRequests[id] = tcs;
+            await _pipeStream.WriteAsync(packet, ct).ConfigureAwait(false);
             await _pipeStream.FlushAsync(ct).ConfigureAwait(false);
         }
         catch (Exception ex)
@@ -275,6 +274,7 @@ public sealed class CoreSupervisor : IDisposable
         }
         catch
         {
+            _pendingRequests.TryRemove(id, out _);
             return null;
         }
     }
@@ -404,57 +404,67 @@ public sealed class CoreSupervisor : IDisposable
     public async Task<bool> RestartCoreAsync(CancellationToken ct = default)
     {
         _isRestarting = true;
-        await _lock.WaitAsync(ct).ConfigureAwait(false);
         try
         {
+            await _lock.WaitAsync(ct).ConfigureAwait(false);
             try
             {
                 if (IsConnected)
                 {
-                    await SendCommandAsync("core.quit", new JsonObject(), ct).ConfigureAwait(false);
+                    // 1000ms safety timeout: do not hang forever if Core is deadlocked
+                    using var quitCts = new CancellationTokenSource(1000);
+                    try
+                    {
+                        await SendCommandAsync("core.quit", new JsonObject(), quitCts.Token).ConfigureAwait(false);
+                    }
+                    catch { }
                 }
-            }
-            catch { }
 
-            StopReadLoop();
-            try { _pipeStream?.Dispose(); } catch { }
-            _pipeStream = null;
+                StopReadLoop();
+                try { _pipeStream?.Dispose(); } catch { }
+                _pipeStream = null;
 
-            if (_jobHandle != IntPtr.Zero)
-            {
-                CloseHandle(_jobHandle);
-                _jobHandle = IntPtr.Zero;
-            }
-
-            try
-            {
-                if (_coreProcess != null && !_coreProcess.HasExited)
+                if (_jobHandle != IntPtr.Zero)
                 {
-                    _coreProcess.Kill();
-                    _coreProcess.WaitForExit(1000);
+                    CloseHandle(_jobHandle);
+                    _jobHandle = IntPtr.Zero;
+                }
+
+                try
+                {
+                    if (_coreProcess != null && !_coreProcess.HasExited)
+                    {
+                        _coreProcess.Kill();
+                        _coreProcess.WaitForExit(1000);
+                    }
+                }
+                catch { }
+                finally
+                {
+                    _coreProcess?.Dispose();
+                    _coreProcess = null;
                 }
             }
-            catch { }
             finally
             {
-                _coreProcess?.Dispose();
-                _coreProcess = null;
+                _lock.Release();
             }
+
+            return await EnsureStartedAndConnectedAsync(ct: ct).ConfigureAwait(false);
         }
         finally
         {
-            _lock.Release();
+            _isRestarting = false;
         }
-
-        bool connected = await EnsureStartedAndConnectedAsync(ct: ct).ConfigureAwait(false);
-        _isRestarting = false;
-        return connected;
     }
 
     public void Dispose()
     {
         if (_disposed) return;
         _disposed = true;
+
+        OnCoreExited = null;
+        OnBroadcastEventReceived = null;
 
         try
         {

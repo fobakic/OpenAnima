@@ -9,13 +9,7 @@ namespace OpenAnima.UI.Services;
 
 public class ProfileService
 {
-    private class BaseItemState
-    {
-        public double Alpha { get; set; }
-        public double Scale { get; set; }
-        public bool ClickThrough { get; set; }
-        public bool Physics { get; set; }
-    }
+    private readonly record struct BaseItemState(double Alpha, double Scale, bool ClickThrough, bool Physics);
 
     private readonly AnimationService _animationService;
     private readonly SemaphoreSlim _switchLock = new(1, 1);
@@ -33,19 +27,30 @@ public class ProfileService
     public void Initialize(AppConfig config)
     {
         ConfigService.EnsureDefaultProfiles(config);
-        CurrentProfile = config.Profiles.FirstOrDefault(p => p.Id == config.ActiveProfileId) 
-                         ?? config.Profiles.FirstOrDefault(p => p.Id == "default")
-                         ?? config.Profiles.FirstOrDefault();
+        CurrentProfile = config.Profiles?.FirstOrDefault(p => p.Id == config.ActiveProfileId) 
+                         ?? config.Profiles?.FirstOrDefault(p => p.Id == "default")
+                         ?? config.Profiles?.FirstOrDefault();
+    }
+
+    /// <summary>
+    /// Registers or updates the authoritative baseline state of an animation when edited by the user.
+    /// </summary>
+    public void NotifyBaseAnimationModified(string filePath, double alpha, double scale, bool clickThrough, bool physics)
+    {
+        if (CurrentProfile == null || CurrentProfile.Id.Equals("default", StringComparison.OrdinalIgnoreCase))
+        {
+            _baseSnapshots[filePath] = new BaseItemState(alpha, scale, clickThrough, physics);
+        }
     }
 
     public async Task<bool> SwitchProfileAsync(string profileId, AppConfig config, ObservableCollection<AnimationItem> animations)
     {
-        if (!_switchLock.Wait(0))
+        if (!await _switchLock.WaitAsync(1500).ConfigureAwait(false))
             return false;
 
         try
         {
-            var target = config.Profiles.FirstOrDefault(p => p.Id.Equals(profileId, StringComparison.OrdinalIgnoreCase));
+            var target = config.Profiles?.FirstOrDefault(p => p.Id.Equals(profileId, StringComparison.OrdinalIgnoreCase));
             if (target == null)
                 return false;
 
@@ -57,13 +62,7 @@ public class ProfileService
             {
                 foreach (var anim in animsArray)
                 {
-                    _baseSnapshots[anim.FilePath] = new BaseItemState
-                    {
-                        Alpha = anim.Alpha,
-                        Scale = anim.Scale,
-                        ClickThrough = anim.ClickThrough,
-                        Physics = anim.Physics
-                    };
+                    _baseSnapshots[anim.FilePath] = new BaseItemState(anim.Alpha, anim.Scale, anim.ClickThrough, anim.Physics);
                 }
             }
 
@@ -82,47 +81,66 @@ public class ProfileService
 
                 if (isDefault)
                 {
-                    // Restore baseline states to both the UI model and running overlays
+                    // Restore baseline states to UI models on the UI thread to prevent thread-affinity exceptions
+                    void RestoreUiModels()
+                    {
+                        foreach (var anim in animsArray)
+                        {
+                            if (_baseSnapshots.TryGetValue(anim.FilePath, out var baseState))
+                            {
+                                anim.Alpha = baseState.Alpha;
+                                anim.Scale = baseState.Scale;
+                                anim.ClickThrough = baseState.ClickThrough;
+                                anim.Physics = baseState.Physics;
+                            }
+                        }
+                    }
+
+                    if (System.Windows.Application.Current?.Dispatcher is { } dispatcher && !dispatcher.CheckAccess())
+                    {
+                        dispatcher.Invoke(RestoreUiModels);
+                    }
+                    else
+                    {
+                        RestoreUiModels();
+                    }
+
+                    // Parallelize updates to active overlays in Core
+                    var updateTasks = new List<Task>();
                     foreach (var anim in animsArray)
                     {
-                        if (_baseSnapshots.TryGetValue(anim.FilePath, out var baseState))
-                        {
-                            anim.Alpha = baseState.Alpha;
-                            anim.Scale = baseState.Scale;
-                            anim.ClickThrough = baseState.ClickThrough;
-                            anim.Physics = baseState.Physics;
-                        }
-
                         if (anim.IsPlaying && anim.OverlayId.HasValue)
                         {
-                            await _animationService.UpdateAsync(
+                            updateTasks.Add(_animationService.UpdateAsync(
                                 anim.OverlayId.Value,
                                 alpha: anim.Alpha,
                                 scale: anim.Scale / 100.0,
                                 clickThrough: anim.ClickThrough,
                                 physics: anim.Physics,
                                 visible: true
-                            ).ConfigureAwait(false);
+                            ));
                         }
                     }
-
+                    await Task.WhenAll(updateTasks).ConfigureAwait(false);
                     _baseSnapshots.Clear();
                 }
                 else
                 {
                     // Apply effective profile rules to running overlays without destroying user baseline
+                    var updateTasks = new List<Task>();
                     foreach (var anim in animsArray)
                     {
                         if (!anim.IsPlaying || !anim.OverlayId.HasValue)
                             continue;
 
-                        target.AnimationStates.TryGetValue(anim.FilePath, out var overrideState);
+                        AnimationProfileState? overrideState = null;
+                        target.AnimationStates?.TryGetValue(anim.FilePath, out overrideState);
 
-                        var baseState = _baseSnapshots.TryGetValue(anim.FilePath, out var bs) ? bs : null;
-                        double baseAlpha = baseState?.Alpha ?? anim.Alpha;
-                        double baseScale = baseState?.Scale ?? anim.Scale;
-                        bool baseClickThrough = baseState?.ClickThrough ?? anim.ClickThrough;
-                        bool basePhysics = baseState?.Physics ?? anim.Physics;
+                        var baseState = _baseSnapshots.TryGetValue(anim.FilePath, out var bs) ? bs : default;
+                        double baseAlpha = _baseSnapshots.ContainsKey(anim.FilePath) ? baseState.Alpha : anim.Alpha;
+                        double baseScale = _baseSnapshots.ContainsKey(anim.FilePath) ? baseState.Scale : anim.Scale;
+                        bool baseClickThrough = _baseSnapshots.ContainsKey(anim.FilePath) ? baseState.ClickThrough : anim.ClickThrough;
+                        bool basePhysics = _baseSnapshots.ContainsKey(anim.FilePath) ? baseState.Physics : anim.Physics;
 
                         bool effectiveClickThrough = target.ForceClickThrough 
                                                      ?? overrideState?.ClickThrough 
@@ -145,19 +163,28 @@ public class ProfileService
                                                    ?? overrideState?.Scale 
                                                    ?? baseScale;
 
-                        await _animationService.UpdateAsync(
+                        updateTasks.Add(_animationService.UpdateAsync(
                             anim.OverlayId.Value,
                             alpha: effectiveAlpha,
                             scale: effectiveScalePct / 100.0,
                             clickThrough: effectiveClickThrough,
                             physics: effectivePhysics,
                             visible: overrideState?.IsActive ?? true
-                        ).ConfigureAwait(false);
+                        ));
                     }
+                    await Task.WhenAll(updateTasks).ConfigureAwait(false);
                 }
             }
 
-            ActiveProfileChanged?.Invoke(target);
+            if (System.Windows.Application.Current?.Dispatcher is { } disp && !disp.CheckAccess())
+            {
+                _ = disp.BeginInvoke(() => ActiveProfileChanged?.Invoke(target));
+            }
+            else
+            {
+                ActiveProfileChanged?.Invoke(target);
+            }
+
             return true;
         }
         finally
