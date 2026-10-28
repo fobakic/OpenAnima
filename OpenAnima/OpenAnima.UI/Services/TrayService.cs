@@ -40,6 +40,10 @@ public sealed class TrayService : IDisposable
     [DllImport("user32.dll", SetLastError = true, CharSet = CharSet.Unicode)]
     private static extern uint RegisterWindowMessageW(string lpString);
 
+    [DllImport("user32.dll", SetLastError = true)]
+    private static extern bool ChangeWindowMessageFilterEx(IntPtr hWnd, uint msg, uint action, IntPtr changeFilterStatus);
+    private const uint MSGFLT_ALLOW = 1;
+
     private uint _showWindowMsg = 0;
 
     [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
@@ -88,6 +92,10 @@ public sealed class TrayService : IDisposable
         _hwndSource?.AddHook(WndProc);
 
         _showWindowMsg = RegisterWindowMessageW("OpenAnima_ShowWindow");
+        if (_showWindowMsg != 0 && _hwnd != IntPtr.Zero)
+        {
+            ChangeWindowMessageFilterEx(_hwnd, _showWindowMsg, MSGFLT_ALLOW, IntPtr.Zero);
+        }
 
         // Load icon
         _hIcon = LoadAppIcon();

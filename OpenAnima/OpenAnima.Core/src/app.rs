@@ -53,10 +53,21 @@ impl Core {
         if let Some(cached) = self.media_cache.get(&key) {
             return Ok(cached.clone());
         }
+        // Enforce 256 MB memory budget for unreferenced animations before inserting a new one
+        self.enforce_cache_budget(256 * 1024 * 1024);
+
         let frames = Arc::new(decode_file(path)?);
         self.frames_decoded += frames.frames.len() as u64;
         self.media_cache.insert(key, frames.clone());
         Ok(frames)
+    }
+
+    /// Prunes cached animations when total cache exceeds the memory budget.
+    pub fn enforce_cache_budget(&mut self, max_bytes: usize) {
+        let total: usize = self.media_cache.values().map(|f| f.bytes()).sum();
+        if total > max_bytes {
+            self.prune_unused_media();
+        }
     }
 
     /// Prunes cached animations that are no longer referenced by any active overlay.
@@ -114,18 +125,27 @@ impl Core {
                 if path.is_empty() {
                     return Response::err(req.id, "missing 'path'");
                 }
+                let norm = normalize(Path::new(path));
+                let was_cached = self.media_cache.contains_key(&norm);
                 match self.load_media(Path::new(path)) {
-                    Ok(frames) => Response::ok(
-                        req.id,
-                        json!({
-                            "path": path,
-                            "width": frames.width,
-                            "height": frames.height,
-                            "frames": frames.frames.len(),
-                            "bytes": frames.bytes(),
-                            "delays_ms": frames.frames.iter().map(|f| f.delay_ms).collect::<Vec<_>>(),
-                        }),
-                    ),
+                    Ok(frames) => {
+                        let resp = Response::ok(
+                            req.id,
+                            json!({
+                                "path": path,
+                                "width": frames.width,
+                                "height": frames.height,
+                                "frames": frames.frames.len(),
+                                "bytes": frames.bytes(),
+                                "delays_ms": frames.frames.iter().map(|f| f.delay_ms).collect::<Vec<_>>(),
+                            }),
+                        );
+                        // If it was loaded just for inspection and not active in overlays, don't pin it
+                        if !was_cached && Arc::strong_count(&frames) <= 2 {
+                            self.media_cache.remove(&norm);
+                        }
+                        resp
+                    }
                     Err(e) => Response::err(req.id, e),
                 }
             }

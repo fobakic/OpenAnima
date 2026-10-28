@@ -37,6 +37,7 @@ impl FrameSet {
     }
 
     /// Resamples all frames to target dimensions using bilinear or nearest neighbor.
+    #[allow(dead_code)]
     pub fn resample(&self, target_w: u32, target_h: u32, smooth: bool) -> FrameSet {
         if target_w == self.width && target_h == self.height {
             return self.clone();
@@ -467,6 +468,12 @@ fn png_to_rgba(
 }
 
 /// Straight RGBA -> premultiplied BGRA.
+#[inline(always)]
+fn premul_channel(c: u8, a: u32) -> u8 {
+    let t = c as u32 * a + 128;
+    ((t + (t >> 8)) >> 8).min(a) as u8
+}
+
 fn rgba_to_premul_bgra(rgba: &[u8]) -> Vec<u8> {
     let mut out = vec![0u8; rgba.len()];
     for (src, dst) in rgba.chunks_exact(4).zip(out.chunks_exact_mut(4)) {
@@ -482,9 +489,9 @@ fn rgba_to_premul_bgra(rgba: &[u8]) -> Vec<u8> {
             dst[2] = 0;
             dst[3] = 0;
         } else {
-            dst[0] = ((src[2] as u32 * a + 127) / 255) as u8;
-            dst[1] = ((src[1] as u32 * a + 127) / 255) as u8;
-            dst[2] = ((src[0] as u32 * a + 127) / 255) as u8;
+            dst[0] = premul_channel(src[2], a);
+            dst[1] = premul_channel(src[1], a);
+            dst[2] = premul_channel(src[0], a);
             dst[3] = src[3];
         }
     }

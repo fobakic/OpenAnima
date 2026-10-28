@@ -24,7 +24,7 @@ use windows::Win32::Graphics::Gdi::{
 };
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows::Win32::UI::WindowsAndMessaging::{
-    CreateWindowExW, DefWindowProcW, DestroyWindow, GetSystemMetrics, GetWindowLongPtrW,
+    CreateWindowExW, DefWindowProcW, DestroyWindow, GetForegroundWindow, GetSystemMetrics, GetWindowLongPtrW,
     GetWindowRect, RegisterClassW, SetWindowLongPtrW, SetWindowPos,
     UpdateLayeredWindow, HICON, HWND_NOTOPMOST, HWND_TOPMOST, SM_CXSCREEN, SM_CYSCREEN,
     SystemParametersInfoW, SPI_GETWORKAREA, SYSTEM_PARAMETERS_INFO_UPDATE_FLAGS,
@@ -288,6 +288,7 @@ impl Default for PetPhysics {
 
 /// A single on-screen animation.
 pub struct Overlay {
+    #[allow(dead_code)]
     pub id: OverlayId,
     pub hwnd: HWND,
     pub raw_frames: Arc<FrameSet>,
@@ -307,6 +308,7 @@ pub struct Overlay {
     pub always_on_top: bool,
     pub click_through: bool,
     pub visible: bool,
+    #[allow(dead_code)]
     pub timer: usize,
     pub base_interval_ms: u32,
     pub current_interval_ms: u32,
@@ -929,6 +931,34 @@ impl Overlay {
     }
 }
 
+impl Drop for Overlay {
+    fn drop(&mut self) {
+        if self.virtual_only {
+            return;
+        }
+        unsafe {
+            if !self.hwnd.0.is_null() {
+                let _ = SetWindowLongPtrW(self.hwnd, GWLP_USERDATA, 0);
+                unregister_id(self.hwnd.0 as isize);
+                let _ = DestroyWindow(self.hwnd);
+                self.hwnd = HWND::default();
+            }
+            if !self.mem_dc.is_invalid() {
+                if !self.old_obj.0.is_null() {
+                    let _ = SelectObject(self.mem_dc, self.old_obj);
+                    self.old_obj = HGDIOBJ(std::ptr::null_mut());
+                }
+                if !self.dib.is_invalid() {
+                    let _ = DeleteObject(self.dib);
+                    self.dib = HBITMAP(std::ptr::null_mut());
+                }
+                let _ = DeleteDC(self.mem_dc);
+                self.mem_dc = HDC::default();
+            }
+        }
+    }
+}
+
 /// Owns every overlay window. Lives on the message-loop thread.
 pub struct OverlayManager {
     overlays: HashMap<OverlayId, Overlay>,
@@ -960,6 +990,7 @@ impl OverlayManager {
         self.overlays.len()
     }
 
+    #[allow(dead_code)]
     pub fn is_empty(&self) -> bool {
         self.overlays.is_empty()
     }
@@ -1217,18 +1248,8 @@ impl OverlayManager {
 
     /// Destroys an overlay window and releases its resources.
     pub fn destroy(&mut self, id: OverlayId) {
-        if let Some(overlay) = self.overlays.remove(&id) {
-            if overlay.virtual_only {
-                return;
-            }
-            unsafe {
-                let _ = SetWindowLongPtrW(overlay.hwnd, GWLP_USERDATA, 0);
-                unregister_id(overlay.hwnd.0 as isize);
-                let _ = DestroyWindow(overlay.hwnd);
-                let _ = SelectObject(overlay.mem_dc, overlay.old_obj);
-                let _ = DeleteObject(overlay.dib);
-                let _ = DeleteDC(overlay.mem_dc);
-            }
+        if let Some(_overlay) = self.overlays.remove(&id) {
+            // Drop automatically releases hwnd, mem_dc, dib, old_obj, and unregisters ID
             if let Some(ref bc) = self.broadcaster {
                 bc.broadcast(crate::proto::Event::new(
                     "overlay.destroyed",
@@ -1253,11 +1274,46 @@ impl OverlayManager {
 
     /// Re-asserts the always-on-top flag; other windows can steal the
     /// top-most position, so this runs on a slow watchdog.
+    /// If an external application is in exclusive/borderless fullscreen,
+    /// we skip re-asserting topmost so we never interrupt gameplay or cause fullscreen minimization.
     pub fn enforce_topmost(&mut self) {
+        if is_foreground_fullscreen_external(&self.overlays) {
+            return;
+        }
         for overlay in self.overlays.values() {
             if overlay.always_on_top {
                 overlay.apply_topmost();
             }
+        }
+    }
+}
+
+fn is_foreground_fullscreen_external(overlays: &HashMap<OverlayId, Overlay>) -> bool {
+    unsafe {
+        let fg = GetForegroundWindow();
+        if fg.0.is_null() {
+            return false;
+        }
+        // If foreground window is one of our own overlays, it's not an external fullscreen app
+        if overlays.values().any(|o| o.hwnd == fg) {
+            return false;
+        }
+        let mut rect = RECT::default();
+        if GetWindowRect(fg, &mut rect).is_err() {
+            return false;
+        }
+        let hmon = MonitorFromWindow(fg, MONITOR_DEFAULTTONEAREST);
+        let mut mi = MONITORINFO {
+            cbSize: std::mem::size_of::<MONITORINFO>() as u32,
+            ..Default::default()
+        };
+        if GetMonitorInfoW(hmon, &mut mi).as_bool() {
+            rect.left <= mi.rcMonitor.left
+                && rect.top <= mi.rcMonitor.top
+                && rect.right >= mi.rcMonitor.right
+                && rect.bottom >= mi.rcMonitor.bottom
+        } else {
+            false
         }
     }
 }

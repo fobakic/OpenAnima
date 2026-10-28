@@ -159,6 +159,7 @@ pub fn resample_bilinear_into(src: &[u8], src_w: u32, src_h: u32, dst: &mut [u8]
 }
 
 /// Allocating resamplers (convenience wrappers)
+#[allow(dead_code)]
 pub fn resample_nearest(src: &[u8], src_w: u32, src_h: u32, dst_w: u32, dst_h: u32) -> Vec<u8> {
     if src_w == dst_w && src_h == dst_h {
         return src.to_vec();
@@ -168,6 +169,7 @@ pub fn resample_nearest(src: &[u8], src_w: u32, src_h: u32, dst_w: u32, dst_h: u
     dst
 }
 
+#[allow(dead_code)]
 pub fn resample_bilinear(src: &[u8], src_w: u32, src_h: u32, dst_w: u32, dst_h: u32) -> Vec<u8> {
     if src_w == dst_w && src_h == dst_h {
         return src.to_vec();

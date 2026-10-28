@@ -65,6 +65,7 @@ impl<'a> Drop for BufferLockGuard<'a> {
 pub struct VideoMetadata {
     pub width: u32,
     pub height: u32,
+    #[allow(dead_code)]
     pub fps: f64,
     pub duration_secs: f64,
     pub stride: i32,

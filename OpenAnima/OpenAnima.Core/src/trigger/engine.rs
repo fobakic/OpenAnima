@@ -184,6 +184,18 @@ impl TriggerPack {
                 let slice = &array.data[start..end];
                 let gray = if channels == 1 {
                     slice.to_vec()
+                } else if channels >= 3 {
+                    // BT.601 Luma conversion matching ScreenCapture and ahash (R*77 + G*150 + B*29) >> 8
+                    let mut g = vec![0u8; width as usize * height as usize];
+                    for i in 0..(width as usize * height as usize) {
+                        let s = i * channels;
+                        let r = slice[s] as u32;
+                        let gr = slice[s + 1] as u32;
+                        let b = slice[s + 2] as u32;
+                        let luma = (r * 77 + gr * 150 + b * 29) >> 8;
+                        g[i] = luma.min(255) as u8;
+                    }
+                    g
                 } else {
                     let mut g = vec![0u8; width as usize * height as usize];
                     for i in 0..(width as usize * height as usize) {

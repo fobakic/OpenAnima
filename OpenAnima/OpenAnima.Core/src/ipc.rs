@@ -35,6 +35,7 @@ pub enum Command {
     /// A client request awaiting a reply.
     Request { req: Request, reply: Sender<Response> },
     /// A notification to broadcast to every client.
+    #[allow(dead_code)]
     Broadcast(Event),
 }
 
@@ -57,10 +58,12 @@ pub struct IpcServer {
     /// Queue consumed by the UI thread.
     pub commands: Receiver<Command>,
     /// Sender clone handed to IPC threads.
+    #[allow(dead_code)]
     pub command_tx: Sender<Command>,
     /// Connected clients, used for broadcast.
     clients: Arc<Mutex<Vec<ClientHandle>>>,
     /// Stop flag for the accept loop.
+    #[allow(dead_code)]
     stop: Arc<Mutex<bool>>,
     /// Wake-up event, stored as an integer so the struct stays `Send`.
     wakeup: usize,
@@ -103,6 +106,7 @@ impl IpcServer {
 
     /// Wakes the UI thread so it drains the command queue immediately.
     /// Called by IPC threads right after enqueuing a command.
+    #[allow(dead_code)]
     pub fn signal(&self) {
         unsafe {
             let _ = SetEvent(self.wakeup_handle());
@@ -134,6 +138,7 @@ impl IpcServer {
     }
 
     /// Number of currently connected clients.
+    #[allow(dead_code)]
     pub fn client_count(&self) -> usize {
         self.clients.lock().unwrap().len()
     }
@@ -483,6 +488,7 @@ fn read_frame(reader: &mut PipeReader) -> std::io::Result<Option<Request>> {
 }
 
 /// Connects to an existing core instance. Returns `None` when no server is up.
+#[allow(dead_code)]
 pub fn connect_client(timeout_ms: u32) -> Option<Client> {
     let name = HSTRING::from(PIPE_NAME);
     for _ in 0..(timeout_ms / 50).max(1) {
@@ -510,6 +516,7 @@ pub fn connect_client(timeout_ms: u32) -> Option<Client> {
 }
 
 /// Synchronous client used by the CLI smoke tests.
+#[allow(dead_code)]
 pub struct Client {
     reader: PipeReader,
     writer: PipeWriter,
@@ -518,6 +525,7 @@ pub struct Client {
 impl Client {
     /// Sends a request and waits for the matching response, skipping any
     /// unsolicited events that arrive in the meantime.
+    #[allow(dead_code)]
     pub fn request(&mut self, req: &Request) -> std::io::Result<Response> {
         write_frame(&mut self.writer, req)?;
         loop {
@@ -535,6 +543,7 @@ impl Client {
 }
 
 /// Exposed for tests: waits until the pipe instance becomes available.
+#[allow(dead_code)]
 pub fn wait_for_server(timeout_ms: u32) -> bool {
     let deadline = std::time::Instant::now() + std::time::Duration::from_millis(timeout_ms as u64);
     while std::time::Instant::now() < deadline {

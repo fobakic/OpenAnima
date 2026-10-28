@@ -26,6 +26,7 @@ pub struct ConversionOptions {
     pub target_fps: u32,          // e.g. 15, 20, 24, 30 (default 20)
     pub max_dimension: u32,       // e.g. 384, 512 (0 = keep original)
     pub chroma_key: ChromaKeyConfig,
+    #[allow(dead_code)]
     pub quality_level: u8,        // Compression level 1..9 (default 6)
 }
 
@@ -131,12 +132,14 @@ pub fn bgra_to_rgba(bgra: &[u8]) -> Vec<u8> {
     rgba
 }
 
+#[allow(dead_code)]
 pub struct FrameItem {
     pub rgba: Vec<u8>,
     pub delay_ms: u16,
 }
 
 /// Encodes a sequence of RGBA frames into an optimized APNG file.
+#[allow(dead_code)]
 pub fn encode_apng(
     frames: Vec<FrameItem>,
     width: u32,
