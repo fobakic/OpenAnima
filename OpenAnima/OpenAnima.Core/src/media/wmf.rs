@@ -219,7 +219,7 @@ impl WmfVideoDecoder {
 
                 let mut output = vec![0u8; (width * height * 4) as usize];
 
-                let is_bottom_up = stride > 0;
+                let is_bottom_up = stride < 0;
 
                 for y in 0..height as usize {
                     let src_y = if is_bottom_up {
@@ -260,15 +260,22 @@ mod tests {
 
     #[test]
     fn test_wmf_open_real_mp4() {
-        let path = Path::new(r"C:\Users\fobakic\Videos\2026-07-22 22-17-34.mp4");
-        if path.exists() {
-            let mut dec = WmfVideoDecoder::open(path).expect("Failed to open MP4");
-            assert!(dec.metadata.width > 0);
-            assert!(dec.metadata.height > 0);
-            let frame = dec.read_next_frame().expect("Read frame failed");
-            assert!(frame.is_some());
-            let f = frame.unwrap();
-            assert_eq!(f.data.len(), (dec.metadata.width * dec.metadata.height * 4) as usize);
+        let candidates = [
+            Path::new(r"C:\Users\fobakic\Downloads\video_2026-10-27_21-25-38.mp4"),
+            Path::new(r"C:\Users\fobakic\Videos\2026-07-22 22-17-34.mp4"),
+        ];
+        for path in &candidates {
+            if path.exists() {
+                let mut dec = WmfVideoDecoder::open(path).expect("Failed to open MP4");
+                assert!(dec.metadata.width > 0);
+                assert!(dec.metadata.height > 0);
+                assert!(dec.metadata.stride != 0);
+                let frame = dec.read_next_frame().expect("Read frame failed");
+                assert!(frame.is_some());
+                let f = frame.unwrap();
+                assert_eq!(f.data.len(), (dec.metadata.width * dec.metadata.height * 4) as usize);
+                break;
+            }
         }
     }
 }
