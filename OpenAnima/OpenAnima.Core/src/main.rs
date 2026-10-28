@@ -223,6 +223,7 @@ fn run() -> Result<(), String> {
 
     let server = ipc::IpcServer::start().map_err(|e| format!("ipc server: {e}"))?;
     core.broadcaster = Some(server.broadcaster());
+    core.overlays.set_broadcaster(server.broadcaster());
     println!(
         "anima-core {} listening on {} (pid {})",
         env!("CARGO_PKG_VERSION"),

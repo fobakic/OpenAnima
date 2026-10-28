@@ -203,12 +203,23 @@ pub fn decode_png_from_reader<R: std::io::Read>(r: R, source: String) -> Result<
 
     let mut canvas = vec![0u8; (width * height * 4) as usize];
     let _previous: Option<Vec<u8>> = None;
-    let mut frames: Vec<Frame> = Vec::new();
+    let capacity = reader
+        .info()
+        .animation_control
+        .as_ref()
+        .map(|ac| ac.num_frames as usize)
+        .unwrap_or(1);
+    let mut frames: Vec<Frame> = Vec::with_capacity(capacity);
     let mut seen_any = false;
 
+    let mut buffer = vec![0u8; reader.output_buffer_size()];
+
     loop {
-        let mut buffer = vec![0u8; reader.output_buffer_size()];
-        let out = match reader.next_frame(&mut buffer) {
+        let needed_size = reader.output_buffer_size();
+        if buffer.len() < needed_size {
+            buffer.resize(needed_size, 0);
+        }
+        let out = match reader.next_frame(&mut buffer[..needed_size]) {
             Ok(info) => info,
             Err(_) => break,
         };
@@ -222,7 +233,7 @@ pub fn decode_png_from_reader<R: std::io::Read>(r: R, source: String) -> Result<
                 if seen_any {
                     break;
                 }
-                let rgba = png_to_rgba(&buffer, out.width, out.height, out.color_type);
+                let rgba = png_to_rgba(&buffer[..needed_size], out.width, out.height, out.color_type);
                 canvas = rgba;
                 let is_animated = reader.info().is_animated();
                 if !is_animated {
@@ -248,7 +259,7 @@ pub fn decode_png_from_reader<R: std::io::Read>(r: R, source: String) -> Result<
 
                 // The decoded pixels are the sub-frame placed at the origin
                 // of the output buffer.
-                let rgba = png_to_rgba(&buffer, fw, fh, out.color_type);
+                let rgba = png_to_rgba(&buffer[..needed_size], fw, fh, out.color_type);
                 let src = &rgba[..];
                 for y in 0..fh {
                     let dy = fc.y_offset + y;
@@ -325,7 +336,7 @@ pub fn decode_png_from_reader<R: std::io::Read>(r: R, source: String) -> Result<
 /// Decodes a PNG or APNG from a file path.
 fn decode_png(path: &Path) -> Result<FrameSet, String> {
     let file = File::open(path).map_err(|e| format!("open {}: {e}", path.display()))?;
-    decode_png_from_reader(BufReader::new(file), path.display().to_string())
+    decode_png_from_reader(BufReader::with_capacity(512 * 1024, file), path.display().to_string())
 }
 
 /// Decodes a static or animated WebP file.
@@ -401,6 +412,11 @@ fn png_to_rgba(
     height: u32,
     color_type: png::ColorType,
 ) -> Vec<u8> {
+    let px = (width * height) as usize;
+    if color_type == png::ColorType::Rgba {
+        let len = (px * 4).min(buffer.len());
+        return buffer[..len].to_vec();
+    }
     let samples = match color_type {
         png::ColorType::Grayscale => 1,
         png::ColorType::GrayscaleAlpha => 2,
@@ -408,8 +424,7 @@ fn png_to_rgba(
         png::ColorType::Rgb => 3,
         png::ColorType::Rgba => 4,
     };
-    let mut out = vec![0u8; (width * height * 4) as usize];
-    let px = (width * height) as usize;
+    let mut out = vec![0u8; px * 4];
 
     for i in 0..px {
         let s = i * samples;
@@ -445,12 +460,7 @@ fn png_to_rgba(
                 out[d + 2] = buffer[s + 2];
                 out[d + 3] = 255;
             }
-            png::ColorType::Rgba => {
-                out[d] = buffer[s];
-                out[d + 1] = buffer[s + 1];
-                out[d + 2] = buffer[s + 2];
-                out[d + 3] = buffer[s + 3];
-            }
+            png::ColorType::Rgba => unreachable!(),
         }
     }
     out
@@ -459,12 +469,24 @@ fn png_to_rgba(
 /// Straight RGBA -> premultiplied BGRA.
 fn rgba_to_premul_bgra(rgba: &[u8]) -> Vec<u8> {
     let mut out = vec![0u8; rgba.len()];
-    for i in (0..rgba.len()).step_by(4) {
-        let a = rgba[i + 3] as u32;
-        out[i] = ((rgba[i + 2] as u32 * a + 127) / 255) as u8;
-        out[i + 1] = ((rgba[i + 1] as u32 * a + 127) / 255) as u8;
-        out[i + 2] = ((rgba[i] as u32 * a + 127) / 255) as u8;
-        out[i + 3] = rgba[i + 3];
+    for (src, dst) in rgba.chunks_exact(4).zip(out.chunks_exact_mut(4)) {
+        let a = src[3] as u32;
+        if a == 255 {
+            dst[0] = src[2];
+            dst[1] = src[1];
+            dst[2] = src[0];
+            dst[3] = 255;
+        } else if a == 0 {
+            dst[0] = 0;
+            dst[1] = 0;
+            dst[2] = 0;
+            dst[3] = 0;
+        } else {
+            dst[0] = ((src[2] as u32 * a + 127) / 255) as u8;
+            dst[1] = ((src[1] as u32 * a + 127) / 255) as u8;
+            dst[2] = ((src[0] as u32 * a + 127) / 255) as u8;
+            dst[3] = src[3];
+        }
     }
     out
 }

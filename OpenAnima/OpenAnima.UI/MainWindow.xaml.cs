@@ -214,6 +214,28 @@ public partial class MainWindow : Window
             _trayService.OnTrayRightClicked += ShowTrayContextMenu;
             _trayService.OnRequestShowWindow += ShowAndActivateWindow;
 
+            _supervisor.OnBroadcastEventReceived += (eventName, eventData) =>
+            {
+                if (eventName == "overlay.destroyed" && eventData != null)
+                {
+                    if (eventData.TryGetPropertyValue("overlay_id", out var idNode) && idNode != null)
+                    {
+                        long destroyedId = idNode.GetValue<long>();
+                        Dispatcher.Invoke(() =>
+                        {
+                            var target = _allAnimations.FirstOrDefault(a => a.OverlayId == destroyedId);
+                            if (target != null)
+                            {
+                                target.IsPlaying = false;
+                                target.OverlayId = null;
+                                UpdateActiveBadgeText();
+                                QueueSaveConfig();
+                            }
+                        });
+                    }
+                }
+            };
+
             _supervisor.OnCoreExited += (exitCode) =>
             {
                 Dispatcher.Invoke(() =>
@@ -419,6 +441,34 @@ public partial class MainWindow : Window
             double uiWs = System.Diagnostics.Process.GetCurrentProcess().WorkingSet64 / (1024.0 * 1024.0);
             TxtStatusBar.Text = LocalizationService.Format("Status_CoreRunning_Format", coreWs, pid, uiWs);
             TxtCoreStatus.Text = LocalizationService.Format("Status_CoreActive_Format", pid, coreWs, uiWs);
+
+            var activeList = await _animationService.ListOverlaysAsync();
+            if (activeList != null)
+            {
+                var activeIds = new HashSet<long>();
+                foreach (var node in activeList)
+                {
+                    if (node?["id"]?.GetValue<long>() is long id)
+                    {
+                        activeIds.Add(id);
+                    }
+                }
+                bool changed = false;
+                foreach (var anim in _allAnimations)
+                {
+                    if (anim.IsPlaying && anim.OverlayId.HasValue && !activeIds.Contains(anim.OverlayId.Value))
+                    {
+                        anim.IsPlaying = false;
+                        anim.OverlayId = null;
+                        changed = true;
+                    }
+                }
+                if (changed)
+                {
+                    UpdateActiveBadgeText();
+                    QueueSaveConfig();
+                }
+            }
         }
         else
         {

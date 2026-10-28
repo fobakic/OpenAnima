@@ -869,6 +869,7 @@ pub struct OverlayManager {
     overlays: HashMap<OverlayId, Overlay>,
     next_id: OverlayId,
     hinstance: HINSTANCE,
+    pub broadcaster: Option<crate::ipc::Broadcaster>,
 }
 
 impl OverlayManager {
@@ -882,7 +883,12 @@ impl OverlayManager {
             overlays: HashMap::new(),
             next_id: 1,
             hinstance,
+            broadcaster: None,
         }
+    }
+
+    pub fn set_broadcaster(&mut self, broadcaster: crate::ipc::Broadcaster) {
+        self.broadcaster = Some(broadcaster);
     }
 
     pub fn len(&self) -> usize {
@@ -1119,6 +1125,12 @@ impl OverlayManager {
                 let _ = SelectObject(overlay.mem_dc, overlay.old_obj);
                 let _ = DeleteObject(overlay.dib);
                 let _ = DeleteDC(overlay.mem_dc);
+            }
+            if let Some(ref bc) = self.broadcaster {
+                bc.broadcast(crate::proto::Event::new(
+                    "overlay.destroyed",
+                    serde_json::json!({ "overlay_id": id }),
+                ));
             }
         }
     }
