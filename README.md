@@ -170,10 +170,10 @@ All build artifacts will be placed in `releases/`.
   - [x] Full i18n localization: English default + Russian.
   - [x] Language selector as Item #1 in Settings.
   - [x] Automated release build script producing Standalone EXE, Portable ZIP, and Self-Contained packages.
-- [ ] **Phase 2: Tools & Profiles (v0.2)**
-  - [ ] Profile presets (Gaming / Work / Chill) with hotkeys.
-  - [ ] Built-in MP4 -> optimized APNG video converter.
-  - [ ] Gravity physics and mouse throw with taskbar bouncing.
+- [x] **Phase 2: Tools & Profiles (v0.2)**
+  - [x] Profile presets (Gaming / Work / Chill) with hotkeys.
+  - [x] Built-in MP4 -> optimized APNG video converter.
+  - [x] Gravity physics and mouse throw with taskbar bouncing.
 - [ ] **Phase 3: Open Community Hub (v0.3)**
   - [ ] OpenAnima Hub animation catalog (free open-source Steam Workshop alternative via GitHub/CDN).
   - [ ] Modular AI background removal plugin (Rembg/ONNX).
