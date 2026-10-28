@@ -258,6 +258,8 @@ pub struct PetPhysics {
     pub bouncy: bool,
     pub vx: f64,
     pub vy: f64,
+    pub exact_x: f64,
+    pub exact_y: f64,
     pub is_dragging: bool,
     pub last_drag_x: i32,
     pub last_drag_y: i32,
@@ -275,6 +277,8 @@ impl Default for PetPhysics {
             bouncy: true,  // When physics is turned on, spring bounce is enabled by default (toggleable)
             vx: 0.0,
             vy: 0.0,
+            exact_x: 0.0,
+            exact_y: 0.0,
             is_dragging: false,
             last_drag_x: 0,
             last_drag_y: 0,
@@ -296,6 +300,8 @@ pub struct Overlay {
     pub index: usize,
     pub x: i32,
     pub y: i32,
+    pub last_presented_x: i32,
+    pub last_presented_y: i32,
     pub scale: f64,
     pub smooth: bool,
     pub flip_x: bool,
@@ -344,6 +350,8 @@ impl Overlay {
             self.physics.is_dragging = false;
             self.physics.vx = 0.0;
             self.physics.vy = 0.0;
+            self.physics.exact_x = self.x as f64;
+            self.physics.exact_y = self.y as f64;
             self.physics.spring_amp = 0.0;
             self.physics.spring_phase = 0.0;
             self.physics.last_tick = std::time::Instant::now();
@@ -410,43 +418,54 @@ impl Overlay {
             return;
         }
 
-        let mut x = self.x as f64;
-        let mut y = self.y as f64;
-
         // Apply gravity: 2200 px/s^2 gives a snappy, responsive desktop pet drop
         self.physics.vy += 2200.0 * dt;
         // Air resistance
         self.physics.vx *= (1.0 - 0.7 * dt).max(0.0);
 
-        x += self.physics.vx * dt;
-        y += self.physics.vy * dt;
+        self.physics.exact_x += self.physics.vx * dt;
+        self.physics.exact_y += self.physics.vy * dt;
 
-        // Bounce on left/right screen edges
+        // Bounce on left/right screen edges with multi-monitor pass-through
         let wall_restitution = if self.physics.bouncy { 0.65 } else { 0.20 };
-        if x < min_x as f64 {
-            x = min_x as f64;
-            self.physics.vx = -self.physics.vx * wall_restitution;
-            if self.physics.vx > 10.0 {
-                self.flip_x = true;
+        if self.physics.exact_x < min_x as f64 {
+            let has_left_monitor = unsafe {
+                let pt = windows::Win32::Foundation::POINT { x: min_x - 10, y: self.y };
+                let mon = windows::Win32::Graphics::Gdi::MonitorFromPoint(pt, windows::Win32::Graphics::Gdi::MONITOR_DEFAULTTONULL);
+                !mon.0.is_null()
+            };
+            if !has_left_monitor {
+                self.physics.exact_x = min_x as f64;
+                self.physics.vx = -self.physics.vx * wall_restitution;
+                if self.physics.vx > 10.0 {
+                    self.flip_x = true;
+                }
             }
-        } else if x > max_x as f64 {
-            x = max_x as f64;
-            self.physics.vx = -self.physics.vx * wall_restitution;
-            if self.physics.vx < -10.0 {
-                self.flip_x = false;
+        } else if self.physics.exact_x > max_x as f64 {
+            let has_right_monitor = unsafe {
+                let pt = windows::Win32::Foundation::POINT { x: max_x + self.width + 10, y: self.y };
+                let mon = windows::Win32::Graphics::Gdi::MonitorFromPoint(pt, windows::Win32::Graphics::Gdi::MONITOR_DEFAULTTONULL);
+                !mon.0.is_null()
+            };
+            if !has_right_monitor {
+                self.physics.exact_x = max_x as f64;
+                self.physics.vx = -self.physics.vx * wall_restitution;
+                if self.physics.vx < -10.0 {
+                    self.flip_x = false;
+                }
             }
         }
 
         // Ceiling clamp
-        if y < min_y as f64 {
-            y = min_y as f64;
+        if self.physics.exact_y < min_y as f64 {
+            self.physics.exact_y = min_y as f64;
             let ceiling_restitution = if self.physics.bouncy { 0.45 } else { 0.10 };
             self.physics.vy = self.physics.vy.abs() * ceiling_restitution;
         }
 
         // Landing on floor (taskbar top edge)
-        if y >= max_y as f64 {
-            y = max_y as f64;
+        if self.physics.exact_y >= max_y as f64 {
+            self.physics.exact_y = max_y as f64;
             let impact_speed = self.physics.vy;
 
             if self.physics.bouncy {
@@ -480,10 +499,24 @@ impl Overlay {
             }
         }
 
-        let new_ix = x.round() as i32;
-        let new_iy = y.round() as i32;
+        let new_ix = self.physics.exact_x.round() as i32;
+        let new_iy = self.physics.exact_y.round() as i32;
         if new_ix != self.x || new_iy != self.y {
-            self.move_to(new_ix, new_iy);
+            self.x = new_ix;
+            self.y = new_iy;
+            if !self.virtual_only {
+                with_programmatic_update(|| unsafe {
+                    let _ = SetWindowPos(
+                        self.hwnd,
+                        None,
+                        new_ix,
+                        new_iy,
+                        0,
+                        0,
+                        SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE,
+                    );
+                });
+            }
         }
 
         if self.physics.is_grounded && self.physics.spring_amp <= 0.3 {
@@ -593,7 +626,15 @@ impl Overlay {
 
         let size = SIZE { cx: self.width, cy: self.height };
         let pt_src = POINT { x: 0, y: 0 };
+        let position_changed = self.x != self.last_presented_x || self.y != self.last_presented_y;
         let pt_dst = POINT { x: self.x, y: self.y };
+        let ppt_dst: Option<*const POINT> = if position_changed {
+            self.last_presented_x = self.x;
+            self.last_presented_y = self.y;
+            Some(&pt_dst)
+        } else {
+            None
+        };
         let blend = BLENDFUNCTION {
             BlendOp: AC_SRC_OVER as u8,
             BlendFlags: 0,
@@ -609,7 +650,7 @@ impl Overlay {
             let _ = UpdateLayeredWindow(
                 self.hwnd,
                 HDC::default(),
-                Some(&pt_dst),
+                ppt_dst,
                 Some(&size),
                 self.mem_dc,
                 Some(&pt_src),
@@ -624,6 +665,8 @@ impl Overlay {
     pub fn move_to(&mut self, x: i32, y: i32) {
         self.x = x;
         self.y = y;
+        self.physics.exact_x = x as f64;
+        self.physics.exact_y = y as f64;
         if self.virtual_only {
             return;
         }
@@ -961,10 +1004,18 @@ impl OverlayManager {
                 index: 0,
                 x,
                 y,
+                last_presented_x: i32::MIN,
+                last_presented_y: i32::MIN,
                 scale,
                 smooth,
                 flip_x: false,
-                physics: PetPhysics { enabled: physics, bouncy, ..Default::default() },
+                physics: PetPhysics {
+                    enabled: physics,
+                    bouncy,
+                    exact_x: x as f64,
+                    exact_y: y as f64,
+                    ..Default::default()
+                },
                 chroma,
                 screen_h,
                 alpha: 1.0,
@@ -1073,10 +1124,18 @@ impl OverlayManager {
             index: 0,
             x,
             y,
+            last_presented_x: i32::MIN,
+            last_presented_y: i32::MIN,
             scale,
             smooth,
             flip_x: false,
-            physics: PetPhysics { enabled: physics, bouncy, ..Default::default() },
+            physics: PetPhysics {
+                enabled: physics,
+                bouncy,
+                exact_x: x as f64,
+                exact_y: y as f64,
+                ..Default::default()
+            },
             chroma,
             screen_h,
             alpha: 1.0,
@@ -1480,6 +1539,8 @@ unsafe extern "system" fn overlay_wnd_proc(
                         overlay.physics.last_drag_time = std::time::Instant::now();
                         overlay.physics.vx = 0.0;
                         overlay.physics.vy = 0.0;
+                        overlay.physics.exact_x = rect.left as f64;
+                        overlay.physics.exact_y = rect.top as f64;
                         overlay.physics.spring_amp = 0.0;
                         overlay.physics.spring_phase = 0.0;
                         overlay.update_timer_speed();
@@ -1503,20 +1564,25 @@ unsafe extern "system" fn overlay_wnd_proc(
                         if overlay.physics.is_dragging {
                             let now = std::time::Instant::now();
                             let dt = now.duration_since(overlay.physics.last_drag_time).as_secs_f64();
-                            if dt > 0.005 && dt < 0.25 {
-                                let inst_vx = (rect.left - overlay.physics.last_drag_x) as f64 / dt;
-                                let inst_vy = (rect.top - overlay.physics.last_drag_y) as f64 / dt;
-                                overlay.physics.vx = overlay.physics.vx * 0.35 + inst_vx * 0.65;
-                                overlay.physics.vy = overlay.physics.vy * 0.35 + inst_vy * 0.65;
+                            // For high-polling mice (500Hz-1000Hz), accumulate if dt < 0.008s (~125Hz)
+                            if dt >= 0.008 {
+                                if dt < 0.25 {
+                                    let inst_vx = (rect.left - overlay.physics.last_drag_x) as f64 / dt;
+                                    let inst_vy = (rect.top - overlay.physics.last_drag_y) as f64 / dt;
+                                    overlay.physics.vx = overlay.physics.vx * 0.35 + inst_vx * 0.65;
+                                    overlay.physics.vy = overlay.physics.vy * 0.35 + inst_vy * 0.65;
+                                }
+                                overlay.physics.last_drag_x = rect.left;
+                                overlay.physics.last_drag_y = rect.top;
+                                overlay.physics.last_drag_time = now;
                             }
-                            overlay.physics.last_drag_x = rect.left;
-                            overlay.physics.last_drag_y = rect.top;
-                            overlay.physics.last_drag_time = now;
                             overlay.physics.is_grounded = false;
                         }
 
                         overlay.x = rect.left;
                         overlay.y = rect.top;
+                        overlay.physics.exact_x = rect.left as f64;
+                        overlay.physics.exact_y = rect.top as f64;
                     }
                 }
             }
@@ -1533,6 +1599,8 @@ unsafe extern "system" fn overlay_wnd_proc(
                     if let Some(overlay) = (*manager).overlays.get_mut(&id) {
                         overlay.x = rect.left;
                         overlay.y = rect.top;
+                        overlay.physics.exact_x = rect.left as f64;
+                        overlay.physics.exact_y = rect.top as f64;
                         overlay.apply_topmost();
 
                         overlay.physics.is_dragging = false;

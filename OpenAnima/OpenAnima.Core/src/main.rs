@@ -214,7 +214,20 @@ fn selftest_file(path: &std::path::Path) -> Result<String, String> {
     .to_string())
 }
 
+#[link(name = "winmm")]
+extern "system" {
+    fn timeBeginPeriod(uPeriod: u32) -> u32;
+    fn timeEndPeriod(uPeriod: u32) -> u32;
+}
+
 fn run() -> Result<(), String> {
+    unsafe {
+        let _ = timeBeginPeriod(1);
+        let _ = windows::Win32::UI::HiDpi::SetProcessDpiAwarenessContext(
+            windows::Win32::UI::HiDpi::DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2,
+        );
+    }
+
     // The overlay manager must outlive every window, and its address has to
     // stay stable because the window proc looks it up through a raw pointer.
     let mut core = Box::new(Core::new()?);
@@ -282,9 +295,6 @@ fn run() -> Result<(), String> {
             }
         }
 
-        // Update physics and animations across all active overlays
-        core.overlays.tick_all();
-
         if core.quit {
             break;
         }
@@ -300,6 +310,7 @@ fn run() -> Result<(), String> {
 
     core.overlays.destroy_all();
     unsafe {
+        let _ = timeEndPeriod(1);
         PostQuitMessage(0);
     }
     Ok(())
