@@ -99,69 +99,79 @@ public partial class Mp4ConverterDialog : Window
 
     private async void BtnStart_Click(object sender, RoutedEventArgs e)
     {
-        string inPath = TxtInputPath.Text.Trim();
-        if (string.IsNullOrEmpty(inPath) || !File.Exists(inPath))
+        try
         {
-            TxtStatus.Text = LocalizationService.CurrentLanguage == "ru"
-                ? "Пожалуйста, укажите существующий файл MP4."
-                : "Please select a valid MP4 file.";
-            return;
+            string inPath = TxtInputPath.Text.Trim();
+            if (string.IsNullOrEmpty(inPath) || !File.Exists(inPath))
+            {
+                TxtStatus.Text = LocalizationService.CurrentLanguage == "ru"
+                    ? "Пожалуйста, укажите существующий файл MP4."
+                    : "Please select a valid MP4 file.";
+                return;
+            }
+
+            string outPath = TxtOutputPath.Text.Trim();
+            if (string.IsNullOrEmpty(outPath))
+            {
+                outPath = Path.ChangeExtension(inPath, ".apng");
+                TxtOutputPath.Text = outPath;
+            }
+
+            int fps = (int)SliderFps.Value;
+            int maxDim = 384;
+            if (CmbMaxSize.SelectedItem is ComboBoxItem item && int.TryParse(item.Tag?.ToString(), out int parsedDim))
+            {
+                maxDim = parsedDim;
+            }
+
+            bool chromaKey = ChkChromaKey.IsChecked == true;
+            string chromaColor = TxtChromaColor.Text.Trim();
+            if (string.IsNullOrEmpty(chromaColor)) chromaColor = "#FFFFFF";
+            double chromaTolerance = SliderTolerance.Value / 100.0;
+            bool chromaContiguous = ChkChromaContiguous.IsChecked == true;
+
+            _currentJobId = "job_" + DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+            _isConverting = true;
+            App.Log($"[Mp4ConverterDialog] Starting conversion job '{_currentJobId}': '{inPath}' -> '{outPath}' (fps: {fps}, maxDim: {maxDim}, chroma: {chromaKey})");
+
+            BtnStart.IsEnabled = false;
+            TxtInputPath.IsEnabled = false;
+            TxtOutputPath.IsEnabled = false;
+            SliderFps.IsEnabled = false;
+            CmbMaxSize.IsEnabled = false;
+            ChkChromaKey.IsEnabled = false;
+            PnlChromaOptions.IsEnabled = false;
+
+            PrgConversion.Value = 0;
+            TxtStatus.Text = LocalizationService.Format("Convert_Converting", 0);
+
+            bool started = await _animationService.ConvertStartAsync(
+                inPath,
+                outPath,
+                fps: fps,
+                maxDim: maxDim,
+                chromaKey: chromaKey,
+                chromaColor: chromaColor,
+                chromaTolerance: chromaTolerance,
+                chromaContiguous: chromaContiguous,
+                jobId: _currentJobId
+            );
+
+            if (!started)
+            {
+                _isConverting = false;
+                ResetControlsState();
+                TxtStatus.Text = LocalizationService.CurrentLanguage == "ru"
+                    ? "Не удалось запустить конвертацию ядра."
+                    : "Failed to initiate conversion in core.";
+            }
         }
-
-        string outPath = TxtOutputPath.Text.Trim();
-        if (string.IsNullOrEmpty(outPath))
+        catch (Exception ex)
         {
-            outPath = Path.ChangeExtension(inPath, ".apng");
-            TxtOutputPath.Text = outPath;
-        }
-
-        int fps = (int)SliderFps.Value;
-        int maxDim = 384;
-        if (CmbMaxSize.SelectedItem is ComboBoxItem item && int.TryParse(item.Tag?.ToString(), out int parsedDim))
-        {
-            maxDim = parsedDim;
-        }
-
-        bool chromaKey = ChkChromaKey.IsChecked == true;
-        string chromaColor = TxtChromaColor.Text.Trim();
-        if (string.IsNullOrEmpty(chromaColor)) chromaColor = "#FFFFFF";
-        double chromaTolerance = SliderTolerance.Value / 100.0;
-        bool chromaContiguous = ChkChromaContiguous.IsChecked == true;
-
-        _currentJobId = "job_" + DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
-        _isConverting = true;
-        App.Log($"[Mp4ConverterDialog] Starting conversion job '{_currentJobId}': '{inPath}' -> '{outPath}' (fps: {fps}, maxDim: {maxDim}, chroma: {chromaKey})");
-
-        BtnStart.IsEnabled = false;
-        TxtInputPath.IsEnabled = false;
-        TxtOutputPath.IsEnabled = false;
-        SliderFps.IsEnabled = false;
-        CmbMaxSize.IsEnabled = false;
-        ChkChromaKey.IsEnabled = false;
-        PnlChromaOptions.IsEnabled = false;
-
-        PrgConversion.Value = 0;
-        TxtStatus.Text = LocalizationService.Format("Convert_Converting", 0);
-
-        bool started = await _animationService.ConvertStartAsync(
-            inPath,
-            outPath,
-            fps: fps,
-            maxDim: maxDim,
-            chromaKey: chromaKey,
-            chromaColor: chromaColor,
-            chromaTolerance: chromaTolerance,
-            chromaContiguous: chromaContiguous,
-            jobId: _currentJobId
-        );
-
-        if (!started)
-        {
+            App.Log($"[Mp4ConverterDialog] BtnStart_Click error: {ex}");
             _isConverting = false;
             ResetControlsState();
-            TxtStatus.Text = LocalizationService.CurrentLanguage == "ru"
-                ? "Не удалось запустить конвертацию ядра."
-                : "Failed to initiate conversion in core.";
+            TxtStatus.Text = ex.Message;
         }
     }
 

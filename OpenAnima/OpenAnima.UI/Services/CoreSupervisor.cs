@@ -122,17 +122,40 @@ public sealed class CoreSupervisor : IDisposable
         }
         catch
         {
-            _readCts?.Cancel();
-            _pipeStream?.Dispose();
+            StopReadLoop();
+            try { _pipeStream?.Dispose(); } catch { }
             _pipeStream = null;
             return false;
         }
     }
 
+    private void StopReadLoop()
+    {
+        try
+        {
+            if (_readCts != null)
+            {
+                if (!_readCts.IsCancellationRequested)
+                {
+                    _readCts.Cancel();
+                }
+                _readCts.Dispose();
+            }
+        }
+        catch (ObjectDisposedException) { }
+        catch (Exception ex)
+        {
+            App.Log($"StopReadLoop error: {ex}");
+        }
+        finally
+        {
+            _readCts = null;
+        }
+    }
+
     private void StartReadLoop()
     {
-        _readCts?.Cancel();
-        _readCts?.Dispose();
+        StopReadLoop();
         _readCts = new CancellationTokenSource();
         var token = _readCts.Token;
         _ = Task.Run(async () =>
@@ -400,10 +423,8 @@ public sealed class CoreSupervisor : IDisposable
             }
             catch { }
 
-            _readCts?.Cancel();
-        _readCts?.Dispose();
-        _pipeStream?.Dispose();
-        _writeLock.Dispose();
+            StopReadLoop();
+            try { _pipeStream?.Dispose(); } catch { }
             _pipeStream = null;
 
             if (_jobHandle != IntPtr.Zero)
@@ -451,10 +472,10 @@ public sealed class CoreSupervisor : IDisposable
         }
         catch { }
 
-        _readCts?.Cancel();
-        _readCts?.Dispose();
-        _pipeStream?.Dispose();
-        _writeLock.Dispose();
+        StopReadLoop();
+        try { _pipeStream?.Dispose(); } catch { }
+        _pipeStream = null;
+        try { _writeLock.Dispose(); } catch { }
 
         if (_jobHandle != IntPtr.Zero)
         {
