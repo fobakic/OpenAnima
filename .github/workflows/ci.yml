@@ -8,6 +8,9 @@ on:
     branches: [ main ]
   workflow_dispatch:
 
+permissions:
+  contents: write
+
 jobs:
   test-and-build:
     name: Build & Verify (Windows)
@@ -48,3 +51,13 @@ jobs:
             releases/*.zip
             releases/SHA256SUMS.txt
           if-no-files-found: error
+
+      - name: Create GitHub Release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            releases/*.exe
+            releases/*.zip
+            releases/SHA256SUMS.txt
+          generate_release_notes: true

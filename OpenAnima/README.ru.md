@@ -1,4 +1,4 @@
-<p align="center">
+﻿<p align="center">
   <img src="docs/images/openanima_logo.png" alt="OpenAnima Logo" width="160" />
 </p>
 
@@ -41,7 +41,7 @@
 
 ### Сводная таблица сравнения
 
-| Параметр | Оригинал (AnimaEngine Steam) | **OpenAnima (v0.1.1-alpha)** | Преимущество OpenAnima |
+| Параметр | Оригинал (AnimaEngine Steam) | **OpenAnima (v0.2.0)** | Преимущество OpenAnima |
 | :--- | :--- | :--- | :--- |
 | **Размер на диске** | **~3 005 МБ** *(3.0 ГБ)* | **8.9 МБ** *(Standalone)* / **3.9 МБ** *(ZIP)* | **В 350–870 раз меньше!** |
 | **Потребление RAM (4 оверлея)** | 300–600+ МБ *(растущие утечки)* | **6.3 МБ** *(зафиксировано в Диспетчере задач)* | **В 50–100 раз экономичнее!** |
@@ -136,13 +136,13 @@ OpenAnima.Core (Rust Microcore ~1.0 MB)
 
 ## Форматы сборки и релизы
 
-Готовые сборки опубликованы в [**разделе Releases**](https://github.com/fobakic/OpenAnima/releases/tag/v0.1.1-alpha) или собираются локально через `build.ps1` в папку `releases/`:
+Готовые сборки опубликованы в [**разделе Releases**](https://github.com/fobakic/OpenAnima/releases/tag/v0.2.0) или собираются локально через `build.ps1` в папку `releases/`:
 
 | Файл | Размер | Описание | Скачать |
 | :--- | :--- | :--- | :--- |
-| **Standalone Single-File EXE** | **8.4 МБ** | **Рекомендуется.** Единый исполняемый файл с упакованным ядром Rust. Распаковывается автоматически. | [⬇️ Скачать EXE](https://github.com/fobakic/OpenAnima/releases/download/v0.1.1-alpha/OpenAnima-v0.1.1-alpha-standalone.exe) |
-| **Портативный ZIP-архив** | **3.7 МБ** | Портативный архив со всеми бинарниками и документацией. Распакуйте в любую папку и запускайте. | [⬇️ Скачать ZIP](https://github.com/fobakic/OpenAnima/releases/download/v0.1.1-alpha/OpenAnima-v0.1.1-alpha-portable.zip) |
-| **Контрольные суммы SHA-256** | < 1 КБ | Криптографические хэши для проверки подлинности и целостности файлов. | [⬇️ Открыть суммы](https://github.com/fobakic/OpenAnima/releases/download/v0.1.1-alpha/SHA256SUMS.txt) |
+| **Standalone Single-File EXE** | **8.4 МБ** | **Рекомендуется.** Единый исполняемый файл с упакованным ядром Rust. Распаковывается автоматически. | [⬇️ Скачать EXE](https://github.com/fobakic/OpenAnima/releases/download/v0.2.0/OpenAnima-v0.2.0-standalone.exe) |
+| **Портативный ZIP-архив** | **3.7 МБ** | Портативный архив со всеми бинарниками и документацией. Распакуйте в любую папку и запускайте. | [⬇️ Скачать ZIP](https://github.com/fobakic/OpenAnima/releases/download/v0.2.0/OpenAnima-v0.2.0-portable.zip) |
+| **Контрольные суммы SHA-256** | < 1 КБ | Криптографические хэши для проверки подлинности и целостности файлов. | [⬇️ Открыть суммы](https://github.com/fobakic/OpenAnima/releases/download/v0.2.0/SHA256SUMS.txt) |
 
 ### Автосборка из исходников
 

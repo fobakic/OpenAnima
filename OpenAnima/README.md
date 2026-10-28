@@ -1,4 +1,4 @@
-<p align="center">
+﻿<p align="center">
   <img src="docs/images/openanima_logo.png" alt="OpenAnima Logo" width="160" />
 </p>
 
@@ -38,7 +38,7 @@ Legacy Python-based overlay apps consume hundreds of megabytes of RAM, launch se
 
 Comparison against the original Steam commercial application (`Steam AppID: 3474900`):
 
-| Metric | Original (Steam AnimaEngine) | **OpenAnima (v0.1.1-alpha)** | OpenAnima Advantage |
+| Metric | Original (Steam AnimaEngine) | **OpenAnima (v0.2.0)** | OpenAnima Advantage |
 | :--- | :--- | :--- | :--- |
 | **Disk Size** | **~3,005 MB** *(3.0 GB)* | **8.5 MB** *(Standalone)* / **3.4 MB** *(ZIP)* | **350x – 870x smaller** |
 | **Active RAM (4 overlays)** | 300–600+ MB *(growing leaks)* | **6.3 MB** *(verified in Windows Task Manager)* | **50x – 100x less memory** |
@@ -133,13 +133,13 @@ OpenAnima.Core (Rust Microcore ~1.0 MB)
 
 ## Download Releases & Automated Builds
 
-Pre-built releases are available in the [**Releases section**](https://github.com/fobakic/OpenAnima/releases/tag/v0.1.1-alpha) or generated automatically via `build.ps1` into `releases/`:
+Pre-built releases are available in the [**Releases section**](https://github.com/fobakic/OpenAnima/releases/tag/v0.2.0) or generated automatically via `build.ps1` into `releases/`:
 
 | Package | Size | Description | Download |
 | :--- | :--- | :--- | :--- |
-| **Standalone Single-File EXE** | **8.4 MB** | **Recommended.** Single executable with embedded Rust microcore. Auto-extracts on first run. | [⬇️ Download EXE](https://github.com/fobakic/OpenAnima/releases/download/v0.1.1-alpha/OpenAnima-v0.1.1-alpha-standalone.exe) |
-| **Portable ZIP Archive** | **3.7 MB** | Portable zip archive with all binaries and documentation. Extract and run anywhere. | [⬇️ Download ZIP](https://github.com/fobakic/OpenAnima/releases/download/v0.1.1-alpha/OpenAnima-v0.1.1-alpha-portable.zip) |
-| **SHA-256 Checksums** | < 1 KB | Cryptographic hashes to verify package authenticity and integrity. | [⬇️ View Checksums](https://github.com/fobakic/OpenAnima/releases/download/v0.1.1-alpha/SHA256SUMS.txt) |
+| **Standalone Single-File EXE** | **8.4 MB** | **Recommended.** Single executable with embedded Rust microcore. Auto-extracts on first run. | [⬇️ Download EXE](https://github.com/fobakic/OpenAnima/releases/download/v0.2.0/OpenAnima-v0.2.0-standalone.exe) |
+| **Portable ZIP Archive** | **3.7 MB** | Portable zip archive with all binaries and documentation. Extract and run anywhere. | [⬇️ Download ZIP](https://github.com/fobakic/OpenAnima/releases/download/v0.2.0/OpenAnima-v0.2.0-portable.zip) |
+| **SHA-256 Checksums** | < 1 KB | Cryptographic hashes to verify package authenticity and integrity. | [⬇️ View Checksums](https://github.com/fobakic/OpenAnima/releases/download/v0.2.0/SHA256SUMS.txt) |
 
 ### Build from Source
 
