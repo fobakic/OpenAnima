@@ -20,6 +20,7 @@ use crate::win::capture::ScreenCapture;
 
 /// A capturable screen region.
 #[derive(Debug, Clone, Deserialize)]
+#[allow(dead_code)]
 pub struct RegionSpec {
     #[serde(default)]
     pub id: String,
@@ -118,6 +119,7 @@ struct FramesMeta {
 }
 
 #[derive(Debug, Deserialize)]
+#[allow(dead_code)]
 struct FramesMetaRegion {
     index: usize,
     path: String,
@@ -126,6 +128,7 @@ struct FramesMetaRegion {
 }
 
 /// A loaded trigger pack with its reference hashes.
+#[allow(dead_code)]
 pub struct TriggerPack {
     pub id: String,
     pub name: String,
@@ -173,6 +176,17 @@ impl TriggerPack {
             let height = array.shape[1] as u32;
             let width = array.shape[2] as u32;
             let channels = array.shape[3];
+
+            if height == 0 || width == 0 || channels == 0 {
+                return Err(format!(
+                    "{}: invalid dimensions: [{}, {}, {}, {}]",
+                    npz_path.display(),
+                    frames,
+                    height,
+                    width,
+                    channels
+                ));
+            }
 
             let mut hashes = Vec::with_capacity(frames);
             for f in 0..frames {
@@ -269,6 +283,7 @@ impl TriggerEngine {
         Ok(id)
     }
 
+    #[allow(dead_code)]
     pub fn remove_pack(&mut self, id: &str) {
         self.packs.remove(id);
         self.running.remove(id);

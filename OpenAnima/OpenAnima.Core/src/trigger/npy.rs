@@ -9,12 +9,14 @@ use std::io::Read;
 use std::path::Path;
 
 /// A parsed `.npy` payload.
+#[allow(dead_code)]
 pub struct NpyArray {
     pub data: Vec<u8>,
     pub shape: Vec<usize>,
     pub dtype: String,
 }
 
+#[allow(dead_code)]
 impl NpyArray {
     /// Number of elements in the first dimension.
     pub fn len(&self) -> usize {

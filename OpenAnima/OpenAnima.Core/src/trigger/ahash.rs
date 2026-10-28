@@ -83,6 +83,7 @@ pub fn area_resize_gray(
 }
 
 /// Converts straight RGB into grayscale using the BT.601 luma weights.
+#[allow(dead_code)]
 pub fn rgb_to_gray(rgb: &[u8], width: u32, height: u32) -> Vec<u8> {
     let pixels = (width as usize) * (height as usize);
     let mut out = vec![0u8; pixels];

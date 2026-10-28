@@ -29,6 +29,7 @@ public sealed class TrayService : IDisposable
 
     private IntPtr _hwnd = IntPtr.Zero;
     private IntPtr _hIcon = IntPtr.Zero;
+    private bool _hIconIsShared;
     private HwndSource? _hwndSource;
     private bool _isCreated;
     private bool _disposed;
@@ -79,6 +80,8 @@ public sealed class TrayService : IDisposable
 
     public void Initialize(Window window, string tooltip = "OpenAnima")
     {
+        if (_isCreated) return;
+
         var helper = new WindowInteropHelper(window);
         _hwnd = helper.Handle;
 
@@ -98,7 +101,7 @@ public sealed class TrayService : IDisposable
         }
 
         // Load icon
-        _hIcon = LoadAppIcon();
+        _hIcon = LoadAppIcon(out _hIconIsShared);
 
         var nid = new NOTIFYICONDATA
         {
@@ -114,8 +117,9 @@ public sealed class TrayService : IDisposable
         _isCreated = Shell_NotifyIconW(NIM_ADD, ref nid);
     }
 
-    private static IntPtr LoadAppIcon()
+    private static IntPtr LoadAppIcon(out bool isShared)
     {
+        isShared = false;
         string baseDir = AppDomain.CurrentDomain.BaseDirectory;
         string[] candidates =
         [
@@ -155,7 +159,8 @@ public sealed class TrayService : IDisposable
         }
         catch { }
 
-        // Fallback: standard system application icon
+        // Fallback: standard system application icon (shared system resource)
+        isShared = true;
         return LoadIconW(IntPtr.Zero, (IntPtr)32512); // IDI_APPLICATION
     }
 
@@ -211,7 +216,10 @@ public sealed class TrayService : IDisposable
 
         if (_hIcon != IntPtr.Zero)
         {
-            DestroyIcon(_hIcon);
+            if (!_hIconIsShared)
+            {
+                DestroyIcon(_hIcon);
+            }
             _hIcon = IntPtr.Zero;
         }
     }

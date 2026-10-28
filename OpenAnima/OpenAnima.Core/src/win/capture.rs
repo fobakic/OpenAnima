@@ -1,4 +1,4 @@
-﻿//! Region screen capture via GDI.
+//! Region screen capture via GDI.
 //!
 //! The capture device and its DIB are allocated once and reused for every
 //! grab. This matters: the Python implementation created a fresh `mss.mss()`
@@ -125,6 +125,7 @@ impl ScreenCapture {
     }
 
     /// Returns the captured pixels as straight RGB, top-down.
+    #[allow(dead_code)]
     pub fn to_rgb(&self) -> Vec<u8> {
         let pixels = (self.width as usize) * (self.height as usize);
         let mut out = vec![0u8; pixels * 3];

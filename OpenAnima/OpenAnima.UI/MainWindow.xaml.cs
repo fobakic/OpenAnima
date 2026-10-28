@@ -1194,6 +1194,11 @@ public partial class MainWindow : Window
         {
             WindowState = WindowState.Normal;
         }
+        var helper = new WindowInteropHelper(this);
+        if (helper.Handle != IntPtr.Zero)
+        {
+            TrayService.SetForegroundWindow(helper.Handle);
+        }
         Activate();
         Focus();
     }

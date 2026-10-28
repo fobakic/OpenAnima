@@ -5,4 +5,5 @@ pub mod ahash;
 pub mod engine;
 pub mod npy;
 
+#[allow(unused_imports)]
 pub use engine::{TriggerEngine, TriggerPack};

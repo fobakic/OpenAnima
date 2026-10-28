@@ -5,4 +5,5 @@ pub mod capture;
 pub mod overlay;
 
 #[cfg(feature = "triggers")]
+#[allow(unused_imports)]
 pub use capture::ScreenCapture;

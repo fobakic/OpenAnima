@@ -38,6 +38,8 @@ use windows::Win32::UI::WindowsAndMessaging::{
     MF_CHECKED, MF_DISABLED, MF_GRAYED, MF_POPUP, MF_SEPARATOR, MF_STRING, MF_UNCHECKED,
     SW_HIDE, SW_RESTORE, SW_SHOWNOACTIVATE, TPM_RETURNCMD, TPM_RIGHTBUTTON, WM_CONTEXTMENU,
     WM_NCRBUTTONDOWN, WM_NCRBUTTONUP, WM_RBUTTONDOWN, WM_RBUTTONUP, WM_NULL,
+    GetClassNameW, GetDesktopWindow, GetShellWindow, GetWindowThreadProcessId,
+    IsIconic, IsWindowVisible, GWL_STYLE, WS_CAPTION,
 };
 
 use crate::media::{apply_chroma_key, ChromaKeyConfig, FrameSet};
@@ -132,21 +134,6 @@ pub type OverlayId = u64;
 /// Registry that maps a window handle to its overlay id. The mapping is
 /// mirrored into `GWLP_USERDATA` so the window proc can find the overlay
 /// without taking a lock on every message.
-static OVERLAY_IDS: std::sync::Mutex<Option<HashMap<isize, OverlayId>>> =
-    std::sync::Mutex::new(None);
-
-fn register_id(hwnd: isize, id: OverlayId) {
-    let mut guard = OVERLAY_IDS.lock().unwrap();
-    guard.get_or_insert_with(HashMap::new).insert(hwnd, id);
-}
-
-fn unregister_id(hwnd: isize) {
-    let mut guard = OVERLAY_IDS.lock().unwrap();
-    if let Some(map) = guard.as_mut() {
-        map.remove(&hwnd);
-    }
-}
-
 /// Global handle to the overlay manager, so the window proc can reach it.
 /// Set once during startup, before any window is created.
 static MANAGER: AtomicPtr<OverlayManager> = AtomicPtr::new(std::ptr::null_mut());
@@ -939,7 +926,6 @@ impl Drop for Overlay {
         unsafe {
             if !self.hwnd.0.is_null() {
                 let _ = SetWindowLongPtrW(self.hwnd, GWLP_USERDATA, 0);
-                unregister_id(self.hwnd.0 as isize);
                 let _ = DestroyWindow(self.hwnd);
                 self.hwnd = HWND::default();
             }
@@ -1135,7 +1121,6 @@ impl OverlayManager {
         unsafe {
             SetWindowLongPtrW(hwnd, GWLP_USERDATA, id as isize);
         }
-        register_id(hwnd.0 as isize, id);
 
         // Create the DIB used as the UpdateLayeredWindow source.
         let row_bytes = (width as usize) * 4;
@@ -1143,7 +1128,6 @@ impl OverlayManager {
         let mem_dc = unsafe { CreateCompatibleDC(HDC::default()) };
         if mem_dc.is_invalid() {
             unsafe { let _ = DestroyWindow(hwnd); }
-            unregister_id(hwnd.0 as isize);
             return Err("CreateCompatibleDC failed".into());
         }
 
@@ -1184,7 +1168,6 @@ impl OverlayManager {
                     let _ = DeleteDC(mem_dc);
                     let _ = DestroyWindow(hwnd);
                 }
-                unregister_id(hwnd.0 as isize);
                 return Err("CreateDIBSection failed".into());
             }
         };
@@ -1294,10 +1277,46 @@ fn is_foreground_fullscreen_external(overlays: &HashMap<OverlayId, Overlay>) -> 
         if fg.0.is_null() {
             return false;
         }
-        // If foreground window is one of our own overlays, it's not an external fullscreen app
-        if overlays.values().any(|o| o.hwnd == fg) {
+
+        // Never consider shell desktop or root desktop window as fullscreen game
+        let shell = GetShellWindow();
+        let desktop = GetDesktopWindow();
+        if fg == shell || fg == desktop {
             return false;
         }
+
+        // Never treat any window of our own process as an external fullscreen app
+        let mut pid = 0u32;
+        GetWindowThreadProcessId(fg, Some(&mut pid));
+        if pid == std::process::id() || overlays.values().any(|o| o.hwnd == fg) {
+            return false;
+        }
+
+        // Must be visible and not minimized
+        if !IsWindowVisible(fg).as_bool() || IsIconic(fg).as_bool() {
+            return false;
+        }
+
+        // Filter out Windows shell desktop, taskbars, etc.
+        let mut class_buf = [0u16; 256];
+        let len = GetClassNameW(fg, &mut class_buf);
+        if len > 0 {
+            let class_str = String::from_utf16_lossy(&class_buf[..len as usize]);
+            if matches!(
+                class_str.as_str(),
+                "Progman" | "WorkerW" | "Shell_TrayWnd" | "Shell_SecondaryTrayWnd"
+            ) {
+                return false;
+            }
+        }
+
+        // Filter out regular maximized windows with a title bar (WS_CAPTION).
+        // Fullscreen games run borderless or exclusive and strip WS_CAPTION.
+        let style = GetWindowLongPtrW(fg, GWL_STYLE) as u32;
+        if (style & WS_CAPTION.0) == WS_CAPTION.0 {
+            return false;
+        }
+
         let mut rect = RECT::default();
         if GetWindowRect(fg, &mut rect).is_err() {
             return false;
@@ -1786,7 +1805,6 @@ unsafe extern "system" fn overlay_wnd_proc(
         }
     }
     if message == WM_DESTROY {
-        unregister_id(hwnd.0 as isize);
         return LRESULT(0);
     }
     unsafe { DefWindowProcW(hwnd, message, wparam, lparam) }
