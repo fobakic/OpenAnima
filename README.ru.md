@@ -18,7 +18,9 @@
   <img src="https://img.shields.io/badge/Platform-Windows%2010%20%2F%2011-0078D4?logo=windows" alt="Platform" />
   <img src="https://img.shields.io/badge/License-MIT-green.svg" alt="MIT License" />
   <a href="https://github.com/fobakic/OpenAnima/releases"><img src="https://img.shields.io/github/v/release/fobakic/OpenAnima?color=blue" alt="GitHub Release" /></a>
+  <a href="https://hub.xerj.org/contributors/fobakic"><img src="https://hub.xerj.org/contributors/fobakic/badge.svg" alt="XERJ Corpus Hub contributor" /></a>
 </p>
+
 
 ---
 
