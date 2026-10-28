@@ -288,7 +288,8 @@ fn serve_client(
             break;
         }
 
-        if bytes_avail >= 4 {
+        let buffered_bytes = reader.buffer.len() - reader.position;
+        if buffered_bytes >= 4 || bytes_avail >= 4 {
             match read_frame(&mut reader) {
                 Ok(Some(req)) => {
                     let (reply_tx, reply_rx) = channel();
@@ -386,20 +387,21 @@ impl PipeReader {
             self.buffer.drain(..self.position);
             self.position = 0;
         }
-        let mut chunk = vec![0u8; 16 * 1024];
-        let mut read: u32 = 0;
-        let ok = unsafe {
-            ReadFile(self.handle, Some(chunk.as_mut_slice()), Some(&mut read), None)
-        };
-        if ok.is_err() {
-            return Err(std::io::Error::last_os_error());
+        let mut chunk = [0u8; 16 * 1024];
+        while self.buffer.len() < needed {
+            let mut read: u32 = 0;
+            let ok = unsafe {
+                ReadFile(self.handle, Some(&mut chunk), Some(&mut read), None)
+            };
+            if ok.is_err() {
+                return Err(std::io::Error::last_os_error());
+            }
+            if read == 0 {
+                return Ok(false);
+            }
+            self.buffer.extend_from_slice(&chunk[..read as usize]);
         }
-        if read == 0 {
-            return Ok(false);
-        }
-        chunk.truncate(read as usize);
-        self.buffer.extend_from_slice(&chunk);
-        Ok(self.buffer.len() - self.position >= needed)
+        Ok(true)
     }
 }
 

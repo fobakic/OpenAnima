@@ -182,14 +182,17 @@ public sealed class CoreSupervisor : IDisposable
                     {
                         string eventName = node["event"]?.ToString() ?? string.Empty;
                         var eventData = node["data"] as JsonObject;
-                        try
+                        ThreadPool.QueueUserWorkItem(_ =>
                         {
-                            OnBroadcastEventReceived?.Invoke(eventName, eventData);
-                        }
-                        catch (Exception ex)
-                        {
-                            App.Log($"[CoreSupervisor] Broadcast event error: {ex.Message}");
-                        }
+                            try
+                            {
+                                OnBroadcastEventReceived?.Invoke(eventName, eventData);
+                            }
+                            catch (Exception ex)
+                            {
+                                App.Log($"[CoreSupervisor] Broadcast event error: {ex.Message}");
+                            }
+                        });
                     }
                     else if (node.ContainsKey("id"))
                     {
@@ -406,19 +409,9 @@ public sealed class CoreSupervisor : IDisposable
         {
             try
             {
-                if (IsConnected && _pipeStream != null)
+                if (IsConnected)
                 {
-                    var reqObj = new JsonObject
-                    {
-                        ["id"] = Interlocked.Increment(ref _nextId),
-                        ["cmd"] = "core.quit",
-                        ["params"] = new JsonObject()
-                    };
-                    byte[] jsonBytes = System.Text.Encoding.UTF8.GetBytes(reqObj.ToJsonString());
-                    byte[] lenBytes = BitConverter.GetBytes((uint)jsonBytes.Length);
-                    _pipeStream.Write(lenBytes, 0, 4);
-                    _pipeStream.Write(jsonBytes, 0, jsonBytes.Length);
-                    _pipeStream.Flush();
+                    await SendCommandAsync("core.quit", new JsonObject(), ct).ConfigureAwait(false);
                 }
             }
             catch { }

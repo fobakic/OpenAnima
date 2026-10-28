@@ -27,14 +27,13 @@ public class ConfigService
 
     public async Task<AppConfig> LoadAsync()
     {
-        try
+        string path = ConfigPath;
+        string bakPath = path + ".bak";
+
+        // Try main config file first
+        if (File.Exists(path))
         {
-            string path = ConfigPath;
-            if (!File.Exists(path) && File.Exists(path + ".tmp"))
-            {
-                path += ".tmp";
-            }
-            if (File.Exists(path))
+            try
             {
                 string json = await File.ReadAllTextAsync(path);
                 var config = JsonSerializer.Deserialize<AppConfig>(json, JsonOptions);
@@ -45,10 +44,31 @@ public class ConfigService
                     return config;
                 }
             }
+            catch (Exception ex)
+            {
+                App.Log($"[ConfigService] Error reading main config, attempting backup: {ex.Message}");
+            }
         }
-        catch (Exception ex)
+
+        // Try backup file if main was missing or corrupt
+        if (File.Exists(bakPath))
         {
-            App.Log($"[ConfigService] Error loading config: {ex.Message}");
+            try
+            {
+                string json = await File.ReadAllTextAsync(bakPath);
+                var config = JsonSerializer.Deserialize<AppConfig>(json, JsonOptions);
+                if (config != null)
+                {
+                    config.AutoStartWithWindows = IsAutoStartEnabled();
+                    EnsureDefaultProfiles(config);
+                    App.Log("[ConfigService] Successfully restored config from backup (.bak)");
+                    return config;
+                }
+            }
+            catch (Exception ex)
+            {
+                App.Log($"[ConfigService] Error reading backup config: {ex.Message}");
+            }
         }
 
         var defaultCfg = new AppConfig();
@@ -71,7 +91,19 @@ public class ConfigService
 
             string json = JsonSerializer.Serialize(config, JsonOptions);
             string tmpPath = path + ".tmp";
+            string bakPath = path + ".bak";
+
             await File.WriteAllTextAsync(tmpPath, json);
+
+            if (File.Exists(path))
+            {
+                try
+                {
+                    File.Copy(path, bakPath, overwrite: true);
+                }
+                catch { }
+            }
+
             File.Move(tmpPath, path, overwrite: true);
             App.Log($"[ConfigService] Config saved atomically to {path}");
 
@@ -102,7 +134,19 @@ public class ConfigService
 
             string json = JsonSerializer.Serialize(config, JsonOptions);
             string tmpPath = path + ".tmp";
+            string bakPath = path + ".bak";
+
             File.WriteAllText(tmpPath, json);
+
+            if (File.Exists(path))
+            {
+                try
+                {
+                    File.Copy(path, bakPath, overwrite: true);
+                }
+                catch { }
+            }
+
             File.Move(tmpPath, path, overwrite: true);
             App.Log($"[ConfigService] Config saved atomically (sync) to {path}");
 

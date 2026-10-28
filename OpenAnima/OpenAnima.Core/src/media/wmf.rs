@@ -11,7 +11,7 @@ use windows::Win32::Media::MediaFoundation::{
     MFMediaType_Video, MFVideoFormat_RGB32,
     MF_MT_FRAME_RATE, MF_MT_FRAME_SIZE, MF_MT_MAJOR_TYPE, MF_MT_SUBTYPE,
     MF_MT_DEFAULT_STRIDE, MF_PD_DURATION, MF_SOURCE_READER_FIRST_VIDEO_STREAM,
-    MF_SOURCE_READER_MEDIASOURCE, MF_SOURCE_READERF_ENDOFSTREAM,
+    MF_SOURCE_READER_MEDIASOURCE, MF_SOURCE_READERF_ENDOFSTREAM, MF_SOURCE_READERF_ERROR,
     MF_SOURCE_READER_ENABLE_ADVANCED_VIDEO_PROCESSING,
     MF_VERSION, MFSTARTUP_NOSOCKET,
 };
@@ -178,7 +178,6 @@ impl WmfVideoDecoder {
         let width = self.metadata.width;
         let height = self.metadata.height;
         let stride = self.metadata.stride;
-        let pitch = stride.abs() as usize;
         let row_bytes = (width * 4) as usize;
 
         unsafe {
@@ -198,6 +197,10 @@ impl WmfVideoDecoder {
                     Some(&mut sample),
                 ).map_err(|e| format!("ReadSample failed: {:?}", e))?;
 
+                if (stream_flags & (MF_SOURCE_READERF_ERROR.0 as u32)) != 0 {
+                    return Err("MF_SOURCE_READERF_ERROR encountered in video stream".to_string());
+                }
+
                 if (stream_flags & (MF_SOURCE_READERF_ENDOFSTREAM.0 as u32)) != 0 {
                     return Ok(None);
                 }
@@ -215,11 +218,33 @@ impl WmfVideoDecoder {
                 buffer.Lock(&mut ptr, Some(&mut max_len), Some(&mut cur_len))
                     .map_err(|e| format!("Buffer Lock failed: {:?}", e))?;
 
+                struct BufferGuard<'a>(&'a windows::Win32::Media::MediaFoundation::IMFMediaBuffer);
+                impl<'a> Drop for BufferGuard<'a> {
+                    fn drop(&mut self) {
+                        unsafe {
+                            let _ = self.0.Unlock();
+                        }
+                    }
+                }
+                let _guard = BufferGuard(&buffer);
+
                 let src_slice = std::slice::from_raw_parts(ptr, cur_len as usize);
+
+                let effective_pitch = if height > 0 && cur_len >= (height * width * 4) {
+                    let calculated = (cur_len / height) as i32;
+                    if calculated >= (width * 4) as i32 {
+                        calculated
+                    } else {
+                        stride
+                    }
+                } else {
+                    stride
+                };
+                let pitch = effective_pitch.abs() as usize;
 
                 let mut output = vec![0u8; (width * height * 4) as usize];
 
-                let is_bottom_up = stride < 0;
+                let is_bottom_up = effective_pitch < 0;
 
                 for y in 0..height as usize {
                     let src_y = if is_bottom_up {
@@ -236,8 +261,6 @@ impl WmfVideoDecoder {
                             .copy_from_slice(&src_slice[src_offset..src_offset + row_bytes]);
                     }
                 }
-
-                let _ = buffer.Unlock();
 
                 let timestamp_secs = if timestamp > 0 {
                     timestamp as f64 / 10_000_000.0

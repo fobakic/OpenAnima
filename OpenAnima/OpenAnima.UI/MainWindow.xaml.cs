@@ -221,7 +221,7 @@ public partial class MainWindow : Window
                     if (eventData.TryGetPropertyValue("overlay_id", out var idNode) && idNode != null)
                     {
                         long destroyedId = idNode.GetValue<long>();
-                        Dispatcher.Invoke(() =>
+                        Dispatcher.BeginInvoke(() =>
                         {
                             var target = _allAnimations.FirstOrDefault(a => a.OverlayId == destroyedId);
                             if (target != null)
@@ -448,9 +448,10 @@ public partial class MainWindow : Window
                 var activeIds = new HashSet<long>();
                 foreach (var node in activeList)
                 {
-                    if (node?["id"]?.GetValue<long>() is long id)
+                    long? id = (node?["overlay_id"] ?? node?["id"])?.GetValue<long>();
+                    if (id.HasValue)
                     {
-                        activeIds.Add(id);
+                        activeIds.Add(id.Value);
                     }
                 }
                 bool changed = false;
@@ -913,22 +914,12 @@ public partial class MainWindow : Window
                         long id = obj["overlay_id"]?.GetValue<long>() ?? 0;
                         int x = obj["x"]?.GetValue<int>() ?? 0;
                         int y = obj["y"]?.GetValue<int>() ?? 0;
-                        double? scaleVal = obj["scale"]?.GetValue<double>();
-                        bool? physVal = obj["physics"]?.GetValue<bool>();
 
                         var item = _allAnimations.FirstOrDefault(a => a.OverlayId == id);
                         if (item != null)
                         {
                             item.X = x;
                             item.Y = y;
-                            if (scaleVal.HasValue)
-                            {
-                                item.Scale = Math.Round(scaleVal.Value * 100.0, 1);
-                            }
-                            if (physVal.HasValue)
-                            {
-                                item.Physics = physVal.Value;
-                            }
                         }
                     }
                 }
@@ -967,22 +958,12 @@ public partial class MainWindow : Window
                     long id = obj["overlay_id"]?.GetValue<long>() ?? 0;
                     int x = obj["x"]?.GetValue<int>() ?? 0;
                     int y = obj["y"]?.GetValue<int>() ?? 0;
-                    double? scaleVal = obj["scale"]?.GetValue<double>();
-                    bool? physVal = obj["physics"]?.GetValue<bool>();
 
                     var item = _allAnimations.FirstOrDefault(a => a.OverlayId == id);
                     if (item != null)
                     {
                         item.X = x;
                         item.Y = y;
-                        if (scaleVal.HasValue)
-                        {
-                            item.Scale = Math.Round(scaleVal.Value * 100.0, 1);
-                        }
-                        if (physVal.HasValue)
-                        {
-                            item.Physics = physVal.Value;
-                        }
                     }
                 }
             }
@@ -1229,8 +1210,6 @@ public partial class MainWindow : Window
 
     private void OnClosing(object? sender, System.ComponentModel.CancelEventArgs e)
     {
-        LocalizationService.LanguageChanged -= OnLanguageChanged;
-
         if (!_isExiting && _config.MinimizeToTrayOnClose)
         {
             e.Cancel = true;
@@ -1242,6 +1221,8 @@ public partial class MainWindow : Window
             }
             return;
         }
+
+        LocalizationService.LanguageChanged -= OnLanguageChanged;
 
         _saveDebounceTimer.Stop();
         _sliderThrottleTimer.Stop();
